@@ -1,36 +1,176 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Universal Profile Migration Mini-App
+
+A mini-app that facilitates Universal Profile (UP) migration between controller applications on LUKSO. Enables users to authorize new controllers on their UP, allowing them to seamlessly transition from one wallet/app to another without losing access to their digital identity.
+
+![LUKSO](https://lukso.network/assets/images/logo.svg)
+
+## Features
+
+- 🔍 **Profile Search** - Search for Universal Profiles using the LUKSO Envio Indexer
+- 🔐 **Permission Management** - Select from preset permission levels or customize permissions
+- 📱 **QR Code Generation** - Generate QR codes for easy cross-device authorization
+- 🔗 **Deep Links** - Share authorization links via messaging apps
+- ✅ **Transaction Verification** - Verify successful controller authorization on-chain
+- 📦 **Static Export** - Deploy to any static hosting provider
+
+## Tech Stack
+
+- **Framework**: Next.js 14+ (App Router)
+- **Styling**: Tailwind CSS + shadcn/ui
+- **Web3**: viem + @lukso/up-provider + @erc725/erc725.js
+- **GraphQL**: graphql-request (for Envio Indexer)
+- **Testing**: Vitest + React Testing Library + Playwright
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- npm or yarn
+- UP Browser Extension (for testing with real wallets)
+
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/yourusername/up-migration-app.git
+cd up-migration-app
+
+# Install dependencies
+npm install
+
+# Start development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Build for Production
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+# Build static export
+npm run build
 
-## Learn More
+# The output is in the 'out' directory
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Testing
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+# Run unit tests
+npm run test
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# Run unit tests once
+npm run test:run
 
-## Deploy on Vercel
+# Run tests with coverage
+npm run test:coverage
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+# Run e2e tests (requires dev server or build)
+npm run test:e2e
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Run e2e tests with UI
+npm run test:e2e:ui
+```
+
+## How It Works
+
+### Migration Flow
+
+1. **Target Device (New App)**
+   - User opens the mini-app in their new wallet/app
+   - Connects their new wallet
+   - Searches for their existing Universal Profile
+   - Selects permission level for the new controller
+   - Generates QR code or authorization link
+
+2. **Source Device (Existing App)**
+   - User scans QR code or opens authorization link
+   - Reviews the authorization request
+   - Connects their existing wallet (that controls the UP)
+   - Approves the transaction to add the new controller
+
+3. **Verification**
+   - The mini-app verifies the controller was added on-chain
+   - Both devices can now control the Universal Profile
+
+### LSP6 Permissions
+
+The app uses LSP6 (Key Manager) permissions to control access:
+
+| Permission | Description |
+|------------|-------------|
+| SUPER_CALL | Call any contract without restrictions |
+| SUPER_TRANSFERVALUE | Transfer native tokens without restrictions |
+| SUPER_SETDATA | Write any data to the profile |
+| SIGN | Sign messages on behalf of the profile |
+| And more... | Full LSP6 permission support |
+
+## Project Structure
+
+```
+src/
+├── app/                    # Next.js App Router pages
+│   ├── page.tsx           # Home page - mode selection
+│   ├── target/            # Target device flow (new app)
+│   ├── authorize/         # Source device flow (existing app)
+│   └── success/           # Migration complete page
+├── components/
+│   ├── ui/                # shadcn/ui components
+│   ├── wallet/            # Wallet connection components
+│   ├── search/            # Profile search components
+│   ├── migration/         # Migration flow components
+│   └── shared/            # Shared utilities
+├── hooks/                 # React hooks
+├── lib/                   # Utility libraries
+│   ├── indexer/          # GraphQL client & queries
+│   ├── lsp6/             # LSP6 transaction building
+│   ├── auth-package/     # Auth package encode/decode
+│   └── utils/            # General utilities
+├── types/                 # TypeScript types
+└── constants/            # Constants and configurations
+```
+
+## API Integrations
+
+### LUKSO Envio Indexer
+
+Used for searching Universal Profiles:
+
+- **Mainnet**: `https://envio.lukso-mainnet.universal.tech/v1/graphql`
+- **Testnet**: `https://envio.lukso-testnet.universal.tech/v1/graphql`
+
+### UP RPC API
+
+The `up_import` method is used to generate a new controller address in the target app.
+
+## Environment Variables
+
+```env
+# Optional: Override the base URL for authorization links
+NEXT_PUBLIC_APP_URL=https://your-domain.com
+```
+
+## Deployment
+
+The app is configured for static export. Deploy the `out` directory to any static hosting:
+
+- **Vercel**: Automatic Next.js support
+- **Netlify**: Drag & drop the `out` folder
+- **GitHub Pages**: Push `out` to gh-pages branch
+- **IPFS**: Pin the `out` directory
+
+## Contributing
+
+Contributions are welcome! Please read our contributing guidelines first.
+
+## License
+
+MIT
+
+## Links
+
+- [LUKSO Documentation](https://docs.lukso.tech)
+- [Universal Profile Cloud](https://universalprofile.cloud)
+- [LSP6 Key Manager](https://docs.lukso.tech/standards/universal-profile/lsp6-key-manager)
+- [UP Provider](https://docs.lukso.tech/tools/apis/up-rpc-api)
