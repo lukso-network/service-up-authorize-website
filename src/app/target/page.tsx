@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { StepIndicator } from '@/components/shared/StepIndicator';
 import { ProfileCard } from '@/components/wallet/ProfileCard';
 import { ProfileSearch } from '@/components/search/ProfileSearch';
@@ -21,6 +22,8 @@ const STEPS = [
   { id: 'share', title: 'Share', description: 'Send to authorize' },
 ];
 
+type ImportStatus = 'idle' | 'importing' | 'success' | 'failed';
+
 export default function TargetPage() {
   const router = useRouter();
   const {
@@ -32,6 +35,7 @@ export default function TargetPage() {
     walletSource,
     isInMiniAppContext,
     contextAddress,
+    requestUpImport,
   } = useWallet();
 
   const [step, setStep] = useState(0);
@@ -40,6 +44,7 @@ export default function TargetPage() {
   const [authLink, setAuthLink] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
 
   // Auto-advance to step 1 when connected
   useEffect(() => {
@@ -62,7 +67,7 @@ export default function TargetPage() {
     setError(null);
   }, []);
 
-  // Step 3: Generate authorization link
+  // Step 3: Generate authorization link (or use UP import if available)
   const handleGenerateAuth = async () => {
     if (!selectedProfile || !network || !address) {
       setError('Missing profile, network, or wallet connection');
@@ -71,13 +76,53 @@ export default function TargetPage() {
 
     setIsGenerating(true);
     setError(null);
+    setImportStatus('idle');
 
     try {
-      // Build auth package - permissions will be selected by the authorizer
-      // We use 0n as a placeholder, the authorizer will set the actual permissions
+      const profileAddress = selectedProfile.id as `0x${string}`;
+
+      // If in mini-app context, try UP import first
+      // This allows the parent app (Universal Everything) to handle authorization directly
+      if (isInMiniAppContext) {
+        setImportStatus('importing');
+        
+        try {
+          const result = await requestUpImport(profileAddress);
+          
+          if (result && result.controllerAddress) {
+            // UP import succeeded! The controller has been authorized
+            setImportStatus('success');
+            
+            // Create a success auth package to show what was done
+            const successPkg: AuthorizationPackage = {
+              version: 1,
+              profileAddress: profileAddress,
+              controllerAddress: result.controllerAddress,
+              requestedPermissions: '0x0', // Not used for success display
+              network: network as 'mainnet' | 'testnet',
+              timestamp: Date.now(),
+              targetApp: {
+                name: 'UP Migration App',
+                url: window.location.origin,
+              },
+            };
+            setAuthPackage(successPkg);
+            setStep(2);
+            return;
+          }
+        } catch (importErr) {
+          console.log('[Target] UP import not available or failed, falling back to QR code:', importErr);
+        }
+        
+        // UP import didn't work, fall back to QR code
+        setImportStatus('failed');
+      }
+
+      // Build auth package for QR code flow
+      // The controller address is the connected wallet's address
       const pkg: AuthorizationPackage = {
         version: 1,
-        profileAddress: selectedProfile.id as `0x${string}`,
+        profileAddress: profileAddress,
         controllerAddress: address,
         requestedPermissions: '0x0', // Authorizer will select permissions
         network: network as 'mainnet' | 'testnet',
@@ -98,6 +143,7 @@ export default function TargetPage() {
     } catch (err) {
       console.error('Error generating auth:', err);
       setError(err instanceof Error ? err.message : 'Failed to generate authorization');
+      setImportStatus('idle');
     } finally {
       setIsGenerating(false);
     }
@@ -207,12 +253,35 @@ export default function TargetPage() {
               <div className="space-y-4">
                 <ProfileCard profile={selectedProfile} selected />
                 
+                {/* Show mini-app context badge if applicable */}
+                {isInMiniAppContext && (
+                  <div className="flex justify-center">
+                    <Badge variant="secondary" className="text-xs">
+                      🚀 Direct authorization available via Universal Everything
+                    </Badge>
+                  </div>
+                )}
+                
                 <Button 
                   onClick={handleGenerateAuth} 
-                  disabled={isGenerating}
+                  disabled={isGenerating || importStatus === 'importing'}
                   className="w-full"
                 >
-                  {isGenerating ? 'Generating...' : 'Generate Authorization Link'}
+                  {importStatus === 'importing' ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Requesting Authorization...
+                    </>
+                  ) : isGenerating ? (
+                    'Generating...'
+                  ) : isInMiniAppContext ? (
+                    'Request Authorization'
+                  ) : (
+                    'Generate Authorization Link'
+                  )}
                 </Button>
                 
                 {/* Error near button */}
@@ -229,39 +298,86 @@ export default function TargetPage() {
 
       {step === 2 && authPackage && (
         <div className="space-y-6">
-          <QRGenerator authPackage={authPackage} deepLinkUrl={authLink} />
-          
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-center space-y-4">
-                <h3 className="font-semibold">What happens next?</h3>
-                <ol className="text-sm text-muted-foreground text-left space-y-2 max-w-md mx-auto">
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">1.</span>
-                    Share this QR code or link with your device that has existing access
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">2.</span>
-                    On that device, open the link and connect your current wallet
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">3.</span>
-                    <strong>Choose the permissions</strong> you want to grant to the new controller
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">4.</span>
-                    Confirm the transaction to authorize the new controller
-                  </li>
-                </ol>
-                
-                <div className="pt-4">
-                  <Button variant="outline" onClick={() => router.push('/')}>
-                    Done
-                  </Button>
+          {/* Show success message if UP import worked */}
+          {importStatus === 'success' ? (
+            <Card>
+              <CardHeader className="text-center">
+                <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/20 flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+                <CardTitle>Authorization Requested!</CardTitle>
+                <CardDescription>
+                  The authorization request has been sent to Universal Everything
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-center space-y-4">
+                <div className="p-4 bg-muted rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Profile</span>
+                    <span className="font-mono">{authPackage.profileAddress.slice(0, 10)}...{authPackage.profileAddress.slice(-8)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Controller</span>
+                    <span className="font-mono">{authPackage.controllerAddress.slice(0, 10)}...{authPackage.controllerAddress.slice(-8)}</span>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Please complete the authorization in Universal Everything to finish the setup.
+                </p>
+                <Button onClick={() => router.push('/success')}>
+                  Continue
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Show notice if UP import was tried but failed */}
+              {importStatus === 'failed' && isInMiniAppContext && (
+                <Alert>
+                  <AlertDescription>
+                    <strong>Note:</strong> Direct authorization through Universal Everything isn&apos;t available. 
+                    Please use the QR code or link below to authorize on another device.
+                  </AlertDescription>
+                </Alert>
+              )}
+              
+              <QRGenerator authPackage={authPackage} deepLinkUrl={authLink} />
+              
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="text-center space-y-4">
+                    <h3 className="font-semibold">What happens next?</h3>
+                    <ol className="text-sm text-muted-foreground text-left space-y-2 max-w-md mx-auto">
+                      <li className="flex gap-2">
+                        <span className="font-bold text-primary">1.</span>
+                        Share this QR code or link with your device that has existing access
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-bold text-primary">2.</span>
+                        On that device, open the link and connect your current wallet
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-bold text-primary">3.</span>
+                        <strong>Choose the permissions</strong> you want to grant to the new controller
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-bold text-primary">4.</span>
+                        Confirm the transaction to authorize the new controller
+                      </li>
+                    </ol>
+                    
+                    <div className="pt-4">
+                      <Button variant="outline" onClick={() => router.push('/')}>
+                        Done
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -46,6 +46,9 @@ interface WalletContextValue extends WalletContextState {
     value?: bigint;
   }) => Promise<`0x${string}` | null>;
   
+  // UP Provider specific
+  requestUpImport: (profileAddress: `0x${string}`) => Promise<{ controllerAddress: `0x${string}` } | null>;
+  
   // WalletConnect control
   openWalletConnect: () => Promise<void>;
   shouldShowWalletConnect: boolean;
@@ -374,6 +377,42 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     }
   }, [openAppKit]);
 
+  /**
+   * Request UP import - asks parent app (Universal Everything) to authorize a controller
+   * for the specified Universal Profile. This is only available in mini-app context.
+   */
+  const requestUpImport = useCallback(async (
+    profileAddress: `0x${string}`
+  ): Promise<{ controllerAddress: `0x${string}` } | null> => {
+    if (!upProvider || !inMiniAppContext) {
+      console.log('[WalletContext] up_import not available - not in mini-app context');
+      return null;
+    }
+
+    try {
+      // Call up_import to request the parent app to authorize a controller
+      // The parent app will handle the authorization flow
+      const result = await upProvider.request({
+        method: 'up_import',
+        params: [profileAddress],
+      });
+      
+      // The result should contain the controller address that was authorized
+      if (result && typeof result === 'string') {
+        return { controllerAddress: result as `0x${string}` };
+      } else if (result && typeof result === 'object' && 'controllerAddress' in (result as object)) {
+        return result as { controllerAddress: `0x${string}` };
+      }
+      
+      console.log('[WalletContext] up_import returned unexpected result:', result);
+      return null;
+    } catch (err) {
+      console.error('[WalletContext] up_import failed:', err);
+      // Method might not be supported, return null to fall back to QR flow
+      return null;
+    }
+  }, [upProvider, inMiniAppContext]);
+
   const value: WalletContextValue = {
     isConnected,
     isConnecting,
@@ -390,6 +429,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     connect,
     disconnect,
     sendTransaction,
+    requestUpImport,
     openWalletConnect,
     shouldShowWalletConnect,
   };

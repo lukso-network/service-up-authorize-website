@@ -2,7 +2,7 @@
 
 import { Card, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { compactAddress } from '@/lib/utils/format';
+import { formatUsername } from '@/lib/utils/format';
 import { generateIdenticon } from '@/lib/utils/identicon';
 import { getBestProfileImage } from '@/lib/indexer/queries';
 import type { ProfileSearchResult } from '@/types/profile';
@@ -16,7 +16,8 @@ interface ProfileCardProps {
 export function ProfileCard({ profile, selected, onClick }: ProfileCardProps) {
   const avatarUrl = getBestProfileImage(profile.profileImages, 'medium');
   const identicon = generateIdenticon(profile.id);
-  const displayName = profile.name || profile.fullName || 'Unnamed Profile';
+  const name = profile.name || profile.fullName;
+  const formattedName = formatUsername(name, profile.id);
 
   return (
     <Card
@@ -29,30 +30,25 @@ export function ProfileCard({ profile, selected, onClick }: ProfileCardProps) {
     >
       <CardContent className="flex items-center gap-4 p-4">
         <Avatar className="h-12 w-12">
-          <AvatarImage src={avatarUrl || undefined} alt={displayName} />
+          <AvatarImage src={avatarUrl || undefined} alt={formattedName} />
           {/* Use identicon as fallback instead of text initials */}
           <AvatarFallback className="p-0">
             {identicon ? (
               <img
                 src={identicon}
-                alt={displayName}
+                alt={formattedName}
                 className="w-full h-full rounded-full"
               />
             ) : (
               <span>
-                {displayName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
+                {(name || 'UN').slice(0, 2).toUpperCase()}
               </span>
             )}
           </AvatarFallback>
         </Avatar>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium truncate">{displayName}</span>
-            <span className="text-sm text-muted-foreground font-mono flex-shrink-0">
-              {compactAddress(profile.id)}
-            </span>
-          </div>
+          <span className="font-medium truncate block">{formattedName}</span>
         </div>
 
         {selected && (

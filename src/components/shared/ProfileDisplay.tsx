@@ -1,7 +1,7 @@
 'use client';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { compactAddress } from '@/lib/utils/format';
+import { formatUsername } from '@/lib/utils/format';
 import { generateIdenticon } from '@/lib/utils/identicon';
 
 interface ProfileDisplayProps {
@@ -21,8 +21,7 @@ const sizeClasses = {
 /**
  * Consistent profile display component showing:
  * - Profile picture (with identicon fallback)
- * - Username (if available)
- * - Compact address (e.g., "0xAb...")
+ * - Username in @name#abcd format
  */
 export function ProfileDisplay({
   address,
@@ -32,42 +31,37 @@ export function ProfileDisplay({
   className = '',
 }: ProfileDisplayProps) {
   const identicon = generateIdenticon(address);
-  const displayName = name || 'Unknown';
+  const formattedName = formatUsername(name, address);
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       <Avatar className={sizeClasses[size]}>
-        <AvatarImage src={avatarUrl || undefined} alt={displayName} />
+        <AvatarImage src={avatarUrl || undefined} alt={formattedName} />
         <AvatarFallback className="p-0">
           {identicon ? (
             <img
               src={identicon}
-              alt={displayName}
+              alt={formattedName}
               className="w-full h-full rounded-full"
             />
           ) : (
             <span className="text-xs">
-              {displayName.slice(0, 2).toUpperCase()}
+              {(name || 'UN').slice(0, 2).toUpperCase()}
             </span>
           )}
         </AvatarFallback>
       </Avatar>
 
-      <div className="flex items-center gap-1.5 min-w-0">
-        {name && (
-          <span className="font-medium truncate">{name}</span>
-        )}
-        <span className="text-sm text-muted-foreground font-mono flex-shrink-0">
-          {compactAddress(address)}
-        </span>
-      </div>
+      <span className="font-medium truncate">
+        {formattedName}
+      </span>
     </div>
   );
 }
 
 /**
  * Simple inline address display with identicon
- * For use in info rows showing just address
+ * For use in info rows showing just address (no username)
  */
 export function AddressWithIdenticon({
   address,
@@ -79,6 +73,8 @@ export function AddressWithIdenticon({
   className?: string;
 }) {
   const identicon = generateIdenticon(address);
+  // For address-only display, use shortened format
+  const shortAddress = formatUsername(null, address);
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
@@ -93,7 +89,7 @@ export function AddressWithIdenticon({
           ) : null}
         </AvatarFallback>
       </Avatar>
-      <span className="font-mono text-sm">{compactAddress(address)}</span>
+      <span className="font-mono text-sm">{shortAddress}</span>
     </div>
   );
 }

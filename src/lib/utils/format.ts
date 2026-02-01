@@ -9,6 +9,27 @@ export function shortenAddress(address: string, chars = 4): string {
 }
 
 /**
+ * Format a username with address suffix for unique identification
+ * e.g., "@johndoe#a1b2" - combines name with first 4 hex chars of address
+ * If no name provided, uses shortened address as fallback
+ */
+export function formatUsername(name: string | null | undefined, address: string): string {
+  if (!address) return 'Unknown';
+  
+  // Get first 4 hex chars after 0x, lowercase
+  const addressSuffix = address.slice(2, 6).toLowerCase();
+  
+  if (name && name.trim()) {
+    // Remove any existing @ prefix and format as @name#abcd
+    const cleanName = name.trim().replace(/^@/, '');
+    return `@${cleanName}#${addressSuffix}`;
+  }
+  
+  // Fallback: just show #abcd with full short address
+  return `#${addressSuffix}`;
+}
+
+/**
  * Compact address format for profile displays (shows only first chars)
  * e.g., "0xAb..." - suitable for showing alongside username
  */
