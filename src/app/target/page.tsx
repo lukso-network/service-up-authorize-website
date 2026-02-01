@@ -2,45 +2,37 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAccount, useChainId, useConnect, useDisconnect } from 'wagmi';
+import { useAppKit } from '@reown/appkit/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { StepIndicator } from '@/components/shared/StepIndicator';
-import { ConnectButton } from '@/components/wallet/ConnectButton';
 import { ProfileCard } from '@/components/wallet/ProfileCard';
 import { ProfileSearch } from '@/components/search/ProfileSearch';
-import { PermissionSelector } from '@/components/migration/PermissionSelector';
 import { QRGenerator } from '@/components/migration/QRGenerator';
-import { useUPProvider } from '@/hooks/useUPProvider';
+import { getNetworkFromChainId } from '@/constants/endpoints';
 import { generateAuthorizationLink } from '@/lib/auth-package/encode';
-import { PERMISSION_PRESETS } from '@/constants/permissions';
 import type { ProfileSearchResult } from '@/types/profile';
 import type { AuthorizationPackage } from '@/types/auth-package';
 
 const STEPS = [
   { id: 'connect', title: 'Connect', description: 'Connect new wallet' },
   { id: 'search', title: 'Search', description: 'Find your profile' },
-  { id: 'permissions', title: 'Permissions', description: 'Set access level' },
-  { id: 'share', title: 'Share', description: 'Send to source device' },
+  { id: 'share', title: 'Share', description: 'Send to authorize' },
 ];
 
 export default function TargetPage() {
   const router = useRouter();
-  const {
-    isConnected,
-    isConnecting,
-    address,
-    network,
-    error: walletError,
-    connect,
-    disconnect,
-    requestUpImport,
-  } = useUPProvider();
+  const { open } = useAppKit();
+  const { address, isConnected, isConnecting } = useAccount();
+  const chainId = useChainId();
+  const { disconnect } = useDisconnect();
 
-  const [step, setStep] = useState(0);
+  const network = chainId ? getNetworkFromChainId(chainId) : null;
+
+  const [step, setStep] = useState(isConnected ? 1 : 0);
   const [selectedProfile, setSelectedProfile] = useState<ProfileSearchResult | null>(null);
-  const [permissions, setPermissions] = useState<bigint>(PERMISSION_PRESETS.STANDARD_WALLET);
-  const [, setControllerAddress] = useState<`0x${string}` | null>(null);
   const [authPackage, setAuthPackage] = useState<AuthorizationPackage | null>(null);
   const [authLink, setAuthLink] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -48,20 +40,31 @@ export default function TargetPage() {
 
   // Step 1: Connect wallet
   const handleConnect = async () => {
-    await connect();
-    setStep(1);
+    try {
+      await open();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to connect wallet');
+    }
+  };
+
+  // Handle connection state changes
+  const handleContinueAfterConnect = () => {
+    if (isConnected) {
+      setStep(1);
+      setError(null);
+    }
   };
 
   // Step 2: Select profile
   const handleProfileSelect = useCallback((profile: ProfileSearchResult) => {
     setSelectedProfile(profile);
-    setStep(2);
+    setError(null);
   }, []);
 
-  // Step 3: Generate authorization
+  // Step 3: Generate authorization link
   const handleGenerateAuth = async () => {
-    if (!selectedProfile || !network) {
-      setError('Missing profile or network');
+    if (!selectedProfile || !network || !address) {
+      setError('Missing profile, network, or wallet connection');
       return;
     }
 
@@ -69,25 +72,13 @@ export default function TargetPage() {
     setError(null);
 
     try {
-      // Call up_import to get controller address
-      const controller = await requestUpImport(selectedProfile.id as `0x${string}`);
-      
-      if (!controller) {
-        // If up_import fails, generate a mock controller for demo purposes
-        // In production, this would be handled by the actual UP Provider
-        setError('up_import not available. Please ensure your wallet supports this feature.');
-        setIsGenerating(false);
-        return;
-      }
-
-      setControllerAddress(controller);
-
-      // Build auth package
+      // Build auth package - permissions will be selected by the authorizer
+      // We use 0n as a placeholder, the authorizer will set the actual permissions
       const pkg: AuthorizationPackage = {
         version: 1,
         profileAddress: selectedProfile.id as `0x${string}`,
-        controllerAddress: controller,
-        requestedPermissions: `0x${permissions.toString(16).padStart(64, '0')}`,
+        controllerAddress: address,
+        requestedPermissions: '0x0', // Authorizer will select permissions
         network: network as 'mainnet' | 'testnet',
         timestamp: Date.now(),
         targetApp: {
@@ -102,53 +93,9 @@ export default function TargetPage() {
       const link = generateAuthorizationLink(pkg);
       setAuthLink(link);
       
-      setStep(3);
+      setStep(2);
     } catch (err) {
       console.error('Error generating auth:', err);
-      setError(err instanceof Error ? err.message : 'Failed to generate authorization');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // For demo: skip up_import and use connected address
-  const handleSkipUpImport = async () => {
-    if (!selectedProfile || !network || !address) {
-      setError('Missing required data');
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-
-    try {
-      // Use connected address as controller (for demo)
-      const controller = address;
-      setControllerAddress(controller);
-
-      // Build auth package
-      const pkg: AuthorizationPackage = {
-        version: 1,
-        profileAddress: selectedProfile.id as `0x${string}`,
-        controllerAddress: controller,
-        requestedPermissions: `0x${permissions.toString(16).padStart(64, '0')}`,
-        network: network as 'mainnet' | 'testnet',
-        timestamp: Date.now(),
-        targetApp: {
-          name: 'UP Migration App',
-          url: window.location.origin,
-        },
-      };
-
-      setAuthPackage(pkg);
-      
-      // Generate link
-      const link = generateAuthorizationLink(pkg);
-      setAuthLink(link);
-      
-      setStep(3);
-    } catch (err) {
-      console.error('Error:', err);
       setError(err instanceof Error ? err.message : 'Failed to generate authorization');
     } finally {
       setIsGenerating(false);
@@ -158,10 +105,14 @@ export default function TargetPage() {
   const goBack = () => {
     if (step > 0) {
       setStep(step - 1);
+      setError(null);
     } else {
       router.push('/');
     }
   };
+
+  const shortenAddress = (addr: string) => 
+    `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-2xl">
@@ -173,25 +124,20 @@ export default function TargetPage() {
           </svg>
           Back
         </Button>
-        <ConnectButton
-          isConnected={isConnected}
-          isConnecting={isConnecting}
-          address={address}
-          network={network}
-          onConnect={connect}
-          onDisconnect={disconnect}
-        />
+        
+        {isConnected ? (
+          <Button variant="outline" size="sm" onClick={() => disconnect()}>
+            {shortenAddress(address || '')}
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" onClick={handleConnect} disabled={isConnecting}>
+            {isConnecting ? 'Connecting...' : 'Connect'}
+          </Button>
+        )}
       </div>
 
       {/* Step Indicator */}
       <StepIndicator steps={STEPS} currentStep={step} className="mb-8" />
-
-      {/* Error Display */}
-      {(error || walletError) && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertDescription>{error || walletError}</AlertDescription>
-        </Alert>
-      )}
 
       {/* Step Content */}
       {step === 0 && (
@@ -208,11 +154,32 @@ export default function TargetPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <Button onClick={handleConnect} size="lg" disabled={isConnecting}>
-              {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-            </Button>
+            
+            {isConnected ? (
+              <div className="text-center space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Connected as <span className="font-mono">{shortenAddress(address || '')}</span>
+                </p>
+                <Button onClick={handleContinueAfterConnect} size="lg">
+                  Continue
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Button onClick={handleConnect} size="lg" disabled={isConnecting}>
+                  {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                </Button>
+                {/* Error near button */}
+                {error && (
+                  <Alert variant="destructive" className="max-w-sm">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+              </>
+            )}
+            
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Make sure you have the UP Browser Extension or a compatible wallet installed
+              Use WalletConnect to connect from any compatible wallet, including the UP Browser Extension
             </p>
           </CardContent>
         </Card>
@@ -226,70 +193,72 @@ export default function TargetPage() {
               Search for the Universal Profile you want to migrate
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             <ProfileSearch
               onSelect={handleProfileSelect}
               network={network || undefined}
               placeholder="Search by name or paste address..."
             />
+            
+            {selectedProfile && (
+              <div className="space-y-4">
+                <ProfileCard profile={selectedProfile} selected />
+                
+                <Button 
+                  onClick={handleGenerateAuth} 
+                  disabled={isGenerating}
+                  className="w-full"
+                >
+                  {isGenerating ? 'Generating...' : 'Generate Authorization Link'}
+                </Button>
+                
+                {/* Error near button */}
+                {error && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {step === 2 && selectedProfile && (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Selected Profile</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ProfileCard profile={selectedProfile} selected />
-            </CardContent>
-          </Card>
-
-          <PermissionSelector
-            permissions={permissions}
-            onPermissionsChange={setPermissions}
-          />
-
-          <div className="flex gap-4">
-            <Button variant="outline" onClick={goBack} className="flex-1">
-              Change Profile
-            </Button>
-            <Button 
-              onClick={handleGenerateAuth} 
-              disabled={isGenerating}
-              className="flex-1"
-            >
-              {isGenerating ? 'Generating...' : 'Generate Authorization'}
-            </Button>
-          </div>
-
-          {/* Demo option */}
-          <div className="text-center">
-            <button 
-              onClick={handleSkipUpImport}
-              className="text-sm text-muted-foreground hover:text-foreground underline"
-              disabled={isGenerating}
-            >
-              Demo mode: Use connected address as controller
-            </button>
-          </div>
-        </div>
-      )}
-
-      {step === 3 && authPackage && (
+      {step === 2 && authPackage && (
         <div className="space-y-6">
           <QRGenerator authPackage={authPackage} deepLinkUrl={authLink} />
           
-          <div className="text-center space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Scan this QR code or share the link with your device that has existing access to the profile
-            </p>
-            <Button variant="outline" onClick={() => router.push('/')}>
-              Done
-            </Button>
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-center space-y-4">
+                <h3 className="font-semibold">What happens next?</h3>
+                <ol className="text-sm text-muted-foreground text-left space-y-2 max-w-md mx-auto">
+                  <li className="flex gap-2">
+                    <span className="font-bold text-primary">1.</span>
+                    Share this QR code or link with your device that has existing access
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="font-bold text-primary">2.</span>
+                    On that device, open the link and connect your current wallet
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="font-bold text-primary">3.</span>
+                    <strong>Choose the permissions</strong> you want to grant to the new controller
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="font-bold text-primary">4.</span>
+                    Confirm the transaction to authorize the new controller
+                  </li>
+                </ol>
+                
+                <div className="pt-4">
+                  <Button variant="outline" onClick={() => router.push('/')}>
+                    Done
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>

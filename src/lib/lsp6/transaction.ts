@@ -154,6 +154,49 @@ export async function buildAddControllerTransaction(
 }
 
 /**
+ * Build the transaction data for setting permissions on a controller
+ * This is a simpler version that just takes the permissions directly
+ */
+export async function buildSetDataTransaction(
+  client: PublicClient,
+  upAddress: `0x${string}`,
+  controllerAddress: `0x${string}`,
+  permissions: bigint
+): Promise<`0x${string}`> {
+  // Check if controller already exists
+  const existingPermissions = await getControllerPermissions(client, upAddress, controllerAddress);
+  const isNewController = existingPermissions === null || existingPermissions === 0n;
+
+  const keys: `0x${string}`[] = [];
+  const values: `0x${string}`[] = [];
+
+  if (isNewController) {
+    // Need to add to the array
+    const currentLength = await getControllerArrayLength(client, upAddress);
+    const newLength = currentLength + 1n;
+
+    // Update array length
+    keys.push(DATA_KEYS.AddressPermissionsArray as `0x${string}`);
+    values.push(pad(toHex(newLength), { size: 16 }));
+
+    // Add controller address to array
+    keys.push(buildAddressPermissionsIndexKey(currentLength));
+    values.push(controllerAddress);
+  }
+
+  // Set permissions
+  keys.push(buildPermissionsKey(controllerAddress));
+  values.push(permissionsToHex(permissions));
+
+  // Encode the transaction
+  return encodeFunctionData({
+    abi: UP_ABI,
+    functionName: 'setDataBatch',
+    args: [keys, values],
+  });
+}
+
+/**
  * Verify that a controller was successfully added
  */
 export async function verifyControllerAdded(
