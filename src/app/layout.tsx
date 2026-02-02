@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Image from 'next/image';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { WalletProvider } from '@/components/providers/WalletProvider';
 import './globals.css';
@@ -51,13 +50,13 @@ export default function RootLayout({
             <header className="border-b">
               <div className="container mx-auto px-4 h-16 flex items-center justify-between">
                 <Link href="/" className="flex items-center gap-2">
-                  <Image
-                    src="/logo-square.png"
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="./logo-square.png"
                     alt="UP Import Logo"
                     width={32}
                     height={32}
                     className="rounded"
-                    unoptimized
                   />
                   <span className="font-bold text-lg">UP Import</span>
                 </Link>
