@@ -1,7 +1,7 @@
 'use client';
 
 import { Skeleton } from '@/components/ui/skeleton';
-import { CompositeAvatar } from '@/components/shared/CompositeAvatar';
+import { CompositeAvatar } from '@/components/shared/LuksoProfileAvatar';
 import { FormattedUsername } from '@/components/shared/FormattedUsername';
 import { shortenAddress } from '@/lib/utils/format';
 import { useProfileData } from '@/hooks/useProfileData';

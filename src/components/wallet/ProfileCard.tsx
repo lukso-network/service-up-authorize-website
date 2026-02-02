@@ -1,7 +1,7 @@
 'use client';
 
 import { Card, CardContent } from '@/components/ui/card';
-import { CompositeAvatar } from '@/components/shared/CompositeAvatar';
+import { CompositeAvatar } from '@/components/shared/LuksoProfileAvatar';
 import { FormattedUsername } from '@/components/shared/FormattedUsername';
 import { getBestProfileImage } from '@/lib/indexer/queries';
 import type { ProfileSearchResult } from '@/types/profile';

@@ -5,10 +5,8 @@
  * Should be imported once at the app root level.
  * 
  * For SSR (Next.js), components are only imported on the client side.
+ * Types are in src/types/lukso-components.d.ts (loaded automatically by TS).
  */
-
-// Import types
-import '@/types/lukso-components.d';
 
 // Only import components on client side (web components need window/document)
 if (typeof window !== 'undefined') {

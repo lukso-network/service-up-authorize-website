@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ProfileDisplay, AddressWithIdenticon } from './ProfileDisplay';
 
-// Mock the CompositeAvatar component
-vi.mock('@/components/shared/CompositeAvatar', () => ({
+// Mock the CompositeAvatar component (now from LuksoProfileAvatar)
+vi.mock('@/components/shared/LuksoProfileAvatar', () => ({
   CompositeAvatar: ({ 
     address, 
     avatarUrl, 

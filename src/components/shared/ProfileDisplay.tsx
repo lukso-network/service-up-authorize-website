@@ -1,6 +1,6 @@
 'use client';
 
-import { CompositeAvatar, SimpleAvatar } from '@/components/shared/CompositeAvatar';
+import { CompositeAvatar, SimpleAvatar } from '@/components/shared/LuksoProfileAvatar';
 import { FormattedUsername } from '@/components/shared/FormattedUsername';
 
 interface ProfileDisplayProps {

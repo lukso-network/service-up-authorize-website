@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-import '@/types/lukso-components.d';
+// Types are in src/types/lukso-components.d.ts (loaded automatically by TS)
 
 // Import lukso components on client side only
 // Using the main import which registers all components
@@ -15,9 +15,13 @@ type LuksoSize = '2x-small' | 'x-small' | 'small' | 'medium' | 'large' | 'x-larg
 interface LuksoProfileAvatarProps {
   /** Profile address for identicon generation */
   address: string;
-  /** Profile picture URL (optional) */
+  /** Profile picture URL (optional) - alias for avatarUrl */
   profileUrl?: string | null;
-  /** Size variant */
+  /** Profile picture URL (optional) */
+  avatarUrl?: string | null;
+  /** Profile name (for accessibility, not displayed) */
+  name?: string | null;
+  /** Size variant - matches CompositeAvatar sizes */
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   /** Show identicon badge when profile pic exists */
   showIdenticon?: boolean;
@@ -39,11 +43,11 @@ const sizeMap: Record<string, LuksoSize> = {
 
 // Size classes for loading skeleton (match LUKSO sizes)
 const skeletonSizeClasses: Record<string, string> = {
-  'xs': 'h-4 w-4',
-  'sm': 'h-6 w-6',
+  'xs': 'h-5 w-5',
+  'sm': 'h-8 w-8',
   'md': 'h-10 w-10',
-  'lg': 'h-14 w-14',
-  'xl': 'h-20 w-20',
+  'lg': 'h-12 w-12',
+  'xl': 'h-16 w-16',
   '2xl': 'h-24 w-24',
 };
 
@@ -51,6 +55,8 @@ const skeletonSizeClasses: Record<string, string> = {
  * LUKSO Profile Avatar Component
  * 
  * Wrapper around the official lukso-profile web component.
+ * Designed as a drop-in replacement for CompositeAvatar.
+ * 
  * Handles:
  * - SSR compatibility (web components only load on client)
  * - Size mapping from our variants to LUKSO's
@@ -60,9 +66,11 @@ const skeletonSizeClasses: Record<string, string> = {
 export function LuksoProfileAvatar({
   address,
   profileUrl,
+  avatarUrl,
+  name,
   size = 'md',
   showIdenticon = true,
-  showLoadingState = false,
+  showLoadingState = true,
   className = '',
 }: LuksoProfileAvatarProps) {
   // Track if component is mounted (for SSR)
@@ -75,13 +83,13 @@ export function LuksoProfileAvatar({
   const luksoSize = sizeMap[size] || 'small';
   const skeletonClass = skeletonSizeClasses[size] || 'h-10 w-10';
 
+  // Support both profileUrl and avatarUrl props
+  const url = profileUrl || avatarUrl || undefined;
+
   // Show skeleton during SSR or initial load
   if (!isMounted && showLoadingState) {
     return <Skeleton className={`rounded-full ${skeletonClass} ${className}`} />;
   }
-
-  // Use undefined for empty URLs so the component uses its default placeholder
-  const url = profileUrl || undefined;
 
   return (
     <lukso-profile
@@ -89,6 +97,70 @@ export function LuksoProfileAvatar({
       profile-address={address}
       has-identicon={showIdenticon}
       size={luksoSize}
+      className={className}
+    />
+  );
+}
+
+/**
+ * Drop-in replacement for CompositeAvatar
+ * Shows profile picture with identicon overlay
+ */
+export function CompositeAvatar({
+  address,
+  avatarUrl,
+  name,
+  size = 'md',
+  showLoadingState = true,
+  className = '',
+}: {
+  address: string;
+  avatarUrl?: string | null;
+  name?: string | null;
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+  showLoadingState?: boolean;
+  className?: string;
+}) {
+  return (
+    <LuksoProfileAvatar
+      address={address}
+      avatarUrl={avatarUrl}
+      name={name}
+      size={size}
+      showIdenticon={true}
+      showLoadingState={showLoadingState}
+      className={className}
+    />
+  );
+}
+
+/**
+ * Simple avatar without identicon overlay
+ * For use cases where only the profile picture or identicon is needed
+ */
+export function SimpleAvatar({
+  address,
+  avatarUrl,
+  name,
+  size = 'md',
+  showLoadingState = true,
+  className = '',
+}: {
+  address: string;
+  avatarUrl?: string | null;
+  name?: string | null;
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+  showLoadingState?: boolean;
+  className?: string;
+}) {
+  return (
+    <LuksoProfileAvatar
+      address={address}
+      avatarUrl={avatarUrl}
+      name={name}
+      size={size}
+      showIdenticon={false}
+      showLoadingState={showLoadingState}
       className={className}
     />
   );
@@ -111,7 +183,7 @@ export function ProfileAvatar({
   return (
     <LuksoProfileAvatar
       address={address}
-      profileUrl={avatarUrl}
+      avatarUrl={avatarUrl}
       size={size}
       showIdenticon={true}
       className={className}

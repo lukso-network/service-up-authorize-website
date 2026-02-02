@@ -1,6 +1,6 @@
-import '@lukso/web-components';
-
 // Type definitions for LUKSO web components in React
+// Note: Do NOT import @lukso/web-components here as it causes build issues
+// The actual import happens client-side only in LuksoProfileAvatar.tsx
 
 type ProfileSize = '2x-small' | 'x-small' | 'small' | 'medium' | 'large' | 'x-large' | '2x-large';
 
