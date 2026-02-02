@@ -57,6 +57,7 @@ export default function RootLayout({
                     width={32}
                     height={32}
                     className="rounded"
+                    unoptimized
                   />
                   <span className="font-bold text-lg">UP Import</span>
                 </Link>
