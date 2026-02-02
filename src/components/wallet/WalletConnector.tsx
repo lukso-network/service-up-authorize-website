@@ -1,10 +1,17 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { useWallet } from '@/contexts/WalletContext';
 import { shortenAddress } from '@/lib/utils/format';
+
+// Debug logging
+const DEBUG_PREFIX = '[WalletConnector]';
+function debugLog(message: string, ...args: unknown[]) {
+  console.log(`${DEBUG_PREFIX} ${message}`, ...args);
+}
 
 interface WalletConnectorProps {
   className?: string;
@@ -40,7 +47,24 @@ export function WalletConnector({
     connect,
     disconnect,
     openWalletConnect,
+    isProviderReady,
   } = useWallet();
+
+  // Log state on render
+  useEffect(() => {
+    debugLog('State:', {
+      isConnected,
+      isConnecting,
+      address,
+      network,
+      error,
+      walletSource,
+      isInMiniAppContext,
+      hasInjectedProvider,
+      shouldShowWalletConnect,
+      isProviderReady,
+    });
+  }, [isConnected, isConnecting, address, network, error, walletSource, isInMiniAppContext, hasInjectedProvider, shouldShowWalletConnect, isProviderReady]);
 
   // If connected, show connected state
   if (isConnected && address) {
@@ -74,12 +98,23 @@ export function WalletConnector({
     );
   }
 
+  // Handle connect click
+  const handleConnect = () => {
+    debugLog('Connect button clicked', { isInMiniAppContext, hasInjectedProvider });
+    connect();
+  };
+
+  const handleWalletConnect = () => {
+    debugLog('WalletConnect button clicked');
+    openWalletConnect();
+  };
+
   // Not connected - show connection options
   return (
     <div className={`flex flex-col gap-2 ${className || ''}`}>
       <div className="flex items-center gap-2">
         {/* Primary connect button */}
-        <Button onClick={() => connect()} size={size} variant={variant}>
+        <Button onClick={handleConnect} size={size} variant={variant}>
           <svg
             className="w-5 h-5 mr-2"
             fill="none"
@@ -98,7 +133,7 @@ export function WalletConnector({
 
         {/* Show WalletConnect button only when appropriate */}
         {shouldShowWalletConnect && hasInjectedProvider && (
-          <Button variant="outline" size={size} onClick={openWalletConnect}>
+          <Button variant="outline" size={size} onClick={handleWalletConnect}>
             WalletConnect
           </Button>
         )}

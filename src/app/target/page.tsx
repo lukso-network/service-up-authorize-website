@@ -16,6 +16,15 @@ import { generateAuthorizationLink } from '@/lib/auth-package/encode';
 import type { ProfileSearchResult } from '@/types/profile';
 import type { AuthorizationPackage } from '@/types/auth-package';
 
+// Debug logging
+const DEBUG_PREFIX = '[TargetPage]';
+function debugLog(message: string, ...args: unknown[]) {
+  console.log(`${DEBUG_PREFIX} ${message}`, ...args);
+}
+function debugError(message: string, ...args: unknown[]) {
+  console.error(`${DEBUG_PREFIX} ❌ ${message}`, ...args);
+}
+
 const STEPS = [
   { id: 'connect', title: 'Connect', description: 'Connect new wallet' },
   { id: 'search', title: 'Search', description: 'Find your profile' },
@@ -48,9 +57,27 @@ export default function TargetPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
 
+  // Log wallet state changes
+  useEffect(() => {
+    debugLog('Wallet state:', {
+      address,
+      isConnected,
+      isConnecting,
+      network,
+      walletError,
+      walletSource,
+      isInMiniAppContext,
+      contextAddress,
+      isProviderReady,
+      currentStep: step,
+    });
+  }, [address, isConnected, isConnecting, network, walletError, walletSource, isInMiniAppContext, contextAddress, isProviderReady, step]);
+
   // Auto-advance to step 1 when provider is ready (even without address for first-time users)
   useEffect(() => {
+    debugLog('Step advancement check:', { isConnected, isProviderReady, step });
     if ((isConnected || isProviderReady) && step === 0) {
+      debugLog('Auto-advancing to step 1');
       setStep(1);
     }
   }, [isConnected, isProviderReady, step]);
@@ -58,9 +85,13 @@ export default function TargetPage() {
   // Handle connection state changes
   // Allow progression even without address for first-time users
   const handleContinueAfterConnect = () => {
+    debugLog('handleContinueAfterConnect called:', { isConnected, isProviderReady });
     if (isConnected || isProviderReady) {
+      debugLog('Proceeding to step 1');
       setStep(1);
       setError(null);
+    } else {
+      debugError('Cannot proceed - not connected and provider not ready');
     }
   };
 
@@ -73,16 +104,23 @@ export default function TargetPage() {
   // Step 3: Generate authorization link
   // CRITICAL: We must get the correct controller address from up_import
   const handleGenerateAuth = async () => {
+    debugLog('=== handleGenerateAuth called ===');
+    debugLog('State check:', { selectedProfile, network, address, isProviderReady });
+    
     // For first-time users, address might be null but we can still proceed
     // if the provider is ready and we can get a controller via up_import
     if (!selectedProfile || !network) {
-      setError('Missing profile or network information');
+      const errMsg = 'Missing profile or network information';
+      debugError(errMsg, { selectedProfile, network });
+      setError(errMsg);
       return;
     }
 
     // Check that we have either an address OR a ready provider (for up_import)
     if (!address && !isProviderReady) {
-      setError('Wallet connection required');
+      const errMsg = 'Wallet connection required';
+      debugError(errMsg, { address, isProviderReady });
+      setError(errMsg);
       return;
     }
 
@@ -97,20 +135,24 @@ export default function TargetPage() {
       // Step 1: Try to get controller address via up_import
       // This is the CORRECT way to get the controller address
       // For first-time users without an address, this is the ONLY way
+      debugLog('Starting up_import flow for profile:', profileAddress);
       setImportStatus('importing');
       
       try {
-        console.log('[Target] Calling up_import for profile:', profileAddress);
+        debugLog('Calling requestUpImport...');
         const importResult = await requestUpImport(profileAddress);
+        
+        debugLog('up_import result:', importResult);
         
         if (importResult && importResult.controllerAddress) {
           // up_import succeeded! This is the controller address to use
           controllerAddress = importResult.controllerAddress;
-          console.log('[Target] up_import returned controller:', controllerAddress);
+          debugLog('up_import returned controller:', controllerAddress);
           
           // In mini-app context, up_import might have already handled the authorization
           // Check if this is a "direct" authorization (success case)
           if (isInMiniAppContext) {
+            debugLog('Mini-app context: direct authorization flow');
             setImportStatus('success');
             
             // Create success auth package to show what was done
@@ -131,39 +173,43 @@ export default function TargetPage() {
             setIsGenerating(false);
             return;
           }
+        } else {
+          debugLog('up_import did not return a controller address');
         }
       } catch (importErr) {
-        console.log('[Target] up_import failed or not available:', importErr);
+        debugError('up_import failed or not available:', importErr);
       }
 
       // Step 2: If up_import didn't return a controller, check if connected address is an EOA
       if (!controllerAddress) {
-        console.log('[Target] up_import did not return controller, checking connected address...');
+        debugLog('up_import did not return controller, checking connected address...', { address });
         
         // For first-time users without an address, we can't proceed without up_import
         if (!address) {
-          setError(
-            'Your wallet extension is connected but did not provide a profile address. ' +
+          const errMsg = 'Your wallet extension is connected but did not provide a profile address. ' +
             'The up_import method is also not available. Please ensure your wallet extension ' +
-            'supports UP import, or connect with a wallet that has an existing profile.'
-          );
+            'supports UP import, or connect with a wallet that has an existing profile.';
+          debugError('No address and no up_import result:', errMsg);
+          setError(errMsg);
           setImportStatus('failed');
           setIsGenerating(false);
           return;
         }
         
         // Verify the connected address is an EOA (not a contract/UP)
+        debugLog('Checking if address is contract:', address);
         const isContract = await isContractAddress(address);
+        debugLog('isContract result:', isContract);
         
         if (isContract) {
           // Connected address is a contract (likely a Universal Profile)
           // Cannot use this as a controller - need up_import
-          setError(
-            'The connected address is a smart contract (Universal Profile). ' +
+          const errMsg = 'The connected address is a smart contract (Universal Profile). ' +
             'To import a profile, your wallet needs to support the up_import method ' +
             'to provide a controller address. Please use a compatible wallet or ' +
-            'connect with an EOA (externally owned account) instead.'
-          );
+            'connect with an EOA (externally owned account) instead.';
+          debugError('Connected address is a contract:', errMsg);
+          setError(errMsg);
           setImportStatus('failed');
           setIsGenerating(false);
           return;
@@ -171,12 +217,13 @@ export default function TargetPage() {
         
         // Connected address is an EOA - can use it as controller
         controllerAddress = address;
-        console.log('[Target] Using connected EOA as controller:', controllerAddress);
+        debugLog('Using connected EOA as controller:', controllerAddress);
       }
 
       setImportStatus('failed'); // Not a direct success, need QR code flow
 
       // Build auth package with the CORRECT controller address
+      debugLog('Building auth package with controller:', controllerAddress);
       const pkg: AuthorizationPackage = {
         version: 1,
         profileAddress: profileAddress,
@@ -190,15 +237,18 @@ export default function TargetPage() {
         },
       };
 
+      debugLog('Auth package created:', pkg);
       setAuthPackage(pkg);
       
       // Generate link with correct controller address
       const link = generateAuthorizationLink(pkg);
+      debugLog('Generated auth link:', link);
       setAuthLink(link);
       
       setStep(2);
+      debugLog('=== handleGenerateAuth completed successfully ===');
     } catch (err) {
-      console.error('Error generating auth:', err);
+      debugError('Error generating auth:', err);
       setError(err instanceof Error ? err.message : 'Failed to generate authorization');
       setImportStatus('idle');
     } finally {
