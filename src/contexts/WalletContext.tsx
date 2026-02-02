@@ -671,6 +671,11 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
    * Request up_import - asks the wallet/provider to provide a controller
    * address for the specified Universal Profile.
    * 
+   * IMPORTANT: This respects the walletSource to maintain provider consistency.
+   * - UP Provider: Only tries UP Provider
+   * - Injected: Only tries injected wallet
+   * - WalletConnect: up_import is not supported (returns null, use EOA fallback)
+   * 
    * Works on any provider that supports the up_import method:
    * - UP Provider (mini-app context)
    * - Injected wallet (if supported)
@@ -678,24 +683,51 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
   const requestUpImport = useCallback(async (
     profileAddress: `0x${string}`
   ): Promise<{ controllerAddress: `0x${string}` } | null> => {
-    logger.log('=== UP_IMPORT ===', { profileAddress });
+    logger.log('=== UP_IMPORT ===', { profileAddress, walletSource });
     
-    // Try UP Provider first
-    if (upProvider) {
-      const result = await tryUpImportOnProvider(upProvider, profileAddress, 'UP Provider');
-      if (result) return result;
+    // Respect the wallet source - don't switch providers mid-session!
+    switch (walletSource) {
+      case 'up-provider':
+        // Only try UP Provider
+        if (upProvider) {
+          const result = await tryUpImportOnProvider(upProvider, profileAddress, 'UP Provider');
+          if (result) return result;
+        }
+        break;
+        
+      case 'injected':
+        // Only try injected provider
+        const providerInfo = detectInjectedProvider();
+        if (providerInfo.hasProvider && providerInfo.provider) {
+          const result = await tryUpImportOnProvider(providerInfo.provider, profileAddress, 'injected');
+          if (result) return result;
+        }
+        break;
+        
+      case 'walletconnect':
+        // WalletConnect does not support up_import - this is expected
+        // The caller should fall back to using the connected EOA as controller
+        logger.log('WalletConnect does not support up_import - use EOA fallback');
+        return null;
+        
+      default:
+        // No wallet source set - this shouldn't happen but try detection
+        logger.warn('No walletSource set, attempting provider detection');
+        if (upProvider) {
+          const result = await tryUpImportOnProvider(upProvider, profileAddress, 'UP Provider');
+          if (result) return result;
+        }
+        const fallbackProvider = detectInjectedProvider();
+        if (fallbackProvider.hasProvider && fallbackProvider.provider) {
+          const result = await tryUpImportOnProvider(fallbackProvider.provider, profileAddress, 'injected');
+          if (result) return result;
+        }
+        break;
     }
     
-    // Try injected provider
-    const providerInfo = detectInjectedProvider();
-    if (providerInfo.hasProvider && providerInfo.provider) {
-      const result = await tryUpImportOnProvider(providerInfo.provider, profileAddress, 'injected');
-      if (result) return result;
-    }
-    
-    logger.log('up_import not available on any provider');
+    logger.log('up_import not available for current wallet source');
     return null;
-  }, [upProvider]);
+  }, [upProvider, walletSource]);
 
   /**
    * Try to call up_import on a specific provider.
