@@ -1,62 +1,110 @@
 'use client';
 
+/**
+ * Wallet Context
+ * 
+ * Provides unified wallet connection state across the application.
+ * Supports multiple connection methods:
+ * - UP Provider (mini-app context in Universal Everything)
+ * - Injected wallet (UP Browser Extension, MetaMask, etc.)
+ * - WalletConnect (via Reown AppKit)
+ * 
+ * Key features:
+ * - Auto-detects environment (iframe, injected provider)
+ * - Handles first-time users without a profile (error -32001)
+ * - Provides `requestUpImport` for profile authorization flow
+ * - Exposes `isContractAddress` for EOA validation
+ * 
+ * @module contexts/WalletContext
+ */
+
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useAccount, useChainId, useDisconnect as useWagmiDisconnect, useSendTransaction } from 'wagmi';
 import { useAppKit } from '@reown/appkit/react';
 import { createPublicClient, http, type PublicClient } from 'viem';
 import { lukso, luksoTestnet } from '@/lib/utils/chains';
 import { getNetworkFromChainId, type NetworkId } from '@/constants/endpoints';
+import { createLogger, logAppStartup } from '@/lib/utils/debug';
 import type { UPClientProvider } from '@lukso/up-provider';
 
 // ============================================================================
-// DEBUG LOGGING UTILITIES
+// DEBUG LOGGING
 // ============================================================================
-const APP_VERSION = 'v9';
-const DEBUG_PREFIX = '[WalletContext]';
 
-// Log version on module load
+const logger = createLogger('[WalletContext]');
+
+// Log app startup once on module load
 if (typeof window !== 'undefined') {
-  console.log(`%c[UP Migration App] ${APP_VERSION} - Debug Logging Enabled`, 'color: #6366f1; font-weight: bold; font-size: 14px;');
-  console.log('%c[UP Migration App] Check console for detailed connection debugging', 'color: #6366f1;');
+  logAppStartup();
 }
 
-function debugLog(message: string, ...args: unknown[]) {
-  console.log(`${DEBUG_PREFIX} ${message}`, ...args);
-}
+// ============================================================================
+// TYPES
+// ============================================================================
 
-function debugError(message: string, ...args: unknown[]) {
-  console.error(`${DEBUG_PREFIX} ❌ ${message}`, ...args);
-}
-
-function debugWarn(message: string, ...args: unknown[]) {
-  console.warn(`${DEBUG_PREFIX} ⚠️ ${message}`, ...args);
-}
-
-function debugSuccess(message: string, ...args: unknown[]) {
-  console.log(`${DEBUG_PREFIX} ✅ ${message}`, ...args);
-}
-
-// Generic EIP-1193 provider interface for injected providers
+/**
+ * Generic EIP-1193 provider interface.
+ * Used for injected providers (window.lukso, window.ethereum).
+ */
 interface EIP1193Provider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 }
 
-// Wallet connection source
+/** Source of the current wallet connection */
 export type WalletSource = 'up-provider' | 'injected' | 'walletconnect' | null;
 
-interface WalletContextState {
-  // Connection state
+/** Information about an injected provider */
+interface InjectedProviderInfo {
+  hasProvider: boolean;
+  type: 'lukso' | 'ethereum' | 'none';
+  provider: EIP1193Provider | null;
+}
+
+/** Internal UP Provider state */
+interface UpProviderState {
   isConnected: boolean;
   isConnecting: boolean;
   address: `0x${string}` | null;
   contextAddress: `0x${string}` | null;
   chainId: number | null;
+}
+
+/**
+ * Tracks provider readiness separate from having an address.
+ * Allows first-time users (who may not have a profile yet) to connect
+ * the extension and proceed to search for/create a profile.
+ */
+interface ProviderReadyState {
+  isReady: boolean;
+  chainId: number | null;
+}
+
+// ============================================================================
+// CONTEXT TYPES
+// ============================================================================
+
+/** Read-only wallet state exposed by the context */
+interface WalletContextState {
+  /** Whether a wallet is connected with an address */
+  isConnected: boolean;
+  /** Whether a connection is in progress */
+  isConnecting: boolean;
+  /** Connected wallet address (may be null for first-time users) */
+  address: `0x${string}` | null;
+  /** Context address from UP Provider (profile being viewed) */
+  contextAddress: `0x${string}` | null;
+  /** Current chain ID */
+  chainId: number | null;
+  /** Network identifier (mainnet/testnet) */
   network: NetworkId | null;
+  /** Current error message, if any */
   error: string | null;
   
-  // Provider info
+  /** How the wallet was connected */
   walletSource: WalletSource;
+  /** Whether running inside an iframe (mini-app context) */
   isInMiniAppContext: boolean;
+  /** Whether an injected provider is available */
   hasInjectedProvider: boolean;
   
   /**
@@ -66,95 +114,112 @@ interface WalletContextState {
    */
   isProviderReady: boolean;
   
-  // Clients
+  /** Viem public client for RPC calls */
   publicClient: PublicClient | null;
+  /** UP Provider instance (only in mini-app context) */
   upProvider: UPClientProvider | null;
 }
 
-interface WalletContextValue extends WalletContextState {
-  // Actions
+/** Actions exposed by the wallet context */
+interface WalletContextActions {
+  /** Connect a wallet. Source is auto-detected if not specified. */
   connect: (source?: 'up-provider' | 'injected' | 'walletconnect') => Promise<void>;
+  /** Disconnect the current wallet */
   disconnect: () => void;
+  /** Send a transaction through the connected wallet */
   sendTransaction: (params: {
     to: `0x${string}`;
     data: `0x${string}`;
     value?: bigint;
   }) => Promise<`0x${string}` | null>;
   
-  // UP Provider specific - now works on any provider
+  /**
+   * Request up_import - asks the wallet to provide a controller address
+   * for the specified Universal Profile.
+   */
   requestUpImport: (profileAddress: `0x${string}`) => Promise<{ controllerAddress: `0x${string}` } | null>;
   
-  // Check if an address is a contract
+  /** Check if an address is a contract (vs EOA) */
   isContractAddress: (address: `0x${string}`) => Promise<boolean>;
   
-  // WalletConnect control
+  /** Open WalletConnect modal */
   openWalletConnect: () => Promise<void>;
+  /** Whether to show WalletConnect option */
   shouldShowWalletConnect: boolean;
 }
 
+type WalletContextValue = WalletContextState & WalletContextActions;
+
+// ============================================================================
+// CONTEXT
+// ============================================================================
+
 const WalletContext = createContext<WalletContextValue | null>(null);
 
-// Check if we're running inside an iframe (mini-app context)
+// ============================================================================
+// ENVIRONMENT DETECTION
+// ============================================================================
+
+/**
+ * Check if running inside an iframe (mini-app context).
+ * In iframe, we use UP Provider for communication with parent.
+ */
 function isInIframe(): boolean {
   if (typeof window === 'undefined') {
-    debugLog('isInIframe: SSR context (window undefined)');
+    logger.log('isInIframe: SSR context');
     return false;
   }
   try {
     const result = window.self !== window.top;
-    debugLog(`isInIframe: ${result}`);
+    logger.log(`isInIframe: ${result}`);
     return result;
-  } catch (e) {
-    debugLog('isInIframe: true (cross-origin exception)', e);
+  } catch {
+    // Cross-origin frame - definitely in iframe
+    logger.log('isInIframe: true (cross-origin)');
     return true;
   }
 }
 
-// Check for injected provider - returns detailed info
-function detectInjectedProvider(): { hasProvider: boolean; type: string; provider: EIP1193Provider | null } {
+/**
+ * Detect injected wallet provider.
+ * Checks for LUKSO-specific provider first, then standard Ethereum provider.
+ */
+function detectInjectedProvider(): InjectedProviderInfo {
   if (typeof window === 'undefined') {
-    debugLog('detectInjectedProvider: SSR context (window undefined)');
     return { hasProvider: false, type: 'none', provider: null };
   }
   
   const luksoProvider = (window as { lukso?: EIP1193Provider }).lukso;
   const ethereumProvider = (window as { ethereum?: EIP1193Provider }).ethereum;
   
-  debugLog('detectInjectedProvider: checking window.lukso:', !!luksoProvider);
-  debugLog('detectInjectedProvider: checking window.ethereum:', !!ethereumProvider);
-  
   if (luksoProvider) {
-    debugLog('detectInjectedProvider: Found LUKSO provider (window.lukso)');
+    logger.log('detectInjectedProvider: Found window.lukso');
     return { hasProvider: true, type: 'lukso', provider: luksoProvider };
   }
   
   if (ethereumProvider) {
-    debugLog('detectInjectedProvider: Found Ethereum provider (window.ethereum)');
+    logger.log('detectInjectedProvider: Found window.ethereum');
     return { hasProvider: true, type: 'ethereum', provider: ethereumProvider };
   }
   
-  debugLog('detectInjectedProvider: No injected provider found');
+  logger.log('detectInjectedProvider: No provider found');
   return { hasProvider: false, type: 'none', provider: null };
 }
 
-// Check for injected provider (legacy compatibility)
-function hasInjectedProvider(): boolean {
-  const result = detectInjectedProvider();
-  return result.hasProvider;
+/**
+ * Create a public client for the given chain ID.
+ */
+function createClientForChain(chainId: number): PublicClient {
+  const chain = chainId === 42 ? lukso : luksoTestnet;
+  return createPublicClient({ chain, transport: http() });
 }
+
+// ============================================================================
+// PROVIDER COMPONENT
+// ============================================================================
 
 interface WalletContextProviderProps {
   children: ReactNode;
-}
-
-/**
- * State for tracking provider readiness separate from having an address.
- * This allows first-time users (who may not have a profile yet) to connect
- * the extension and proceed to search for/create a profile.
- */
-interface ProviderReadyState {
-  isReady: boolean;
-  chainId: number | null;
 }
 
 export function WalletContextProvider({ children }: WalletContextProviderProps) {
@@ -167,13 +232,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
 
   // UP Provider state
   const [upProvider, setUpProvider] = useState<UPClientProvider | null>(null);
-  const [upState, setUpState] = useState<{
-    isConnected: boolean;
-    isConnecting: boolean;
-    address: `0x${string}` | null;
-    contextAddress: `0x${string}` | null;
-    chainId: number | null;
-  }>({
+  const [upState, setUpState] = useState<UpProviderState>({
     isConnected: false,
     isConnecting: false,
     address: null,
@@ -189,344 +248,330 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
   const [publicClient, setPublicClient] = useState<PublicClient | null>(null);
   const [initialized, setInitialized] = useState(false);
   
-  // Provider readiness state - tracks if provider is connected even without address
-  // This allows first-time users (who may not have a profile yet) to proceed
+  // Provider readiness - enables first-time user flow
   const [providerReady, setProviderReady] = useState<ProviderReadyState>({
     isReady: false,
     chainId: null,
   });
 
-  // Initialize environment detection and UP Provider
+  // ========================================================================
+  // INITIALIZATION
+  // ========================================================================
+
   useEffect(() => {
-    const init = async () => {
-      debugLog('=== INITIALIZATION STARTING ===');
-      
-      if (typeof window === 'undefined') {
-        debugLog('init: SSR context, skipping');
-        return;
-      }
-
-      const inIframe = isInIframe();
-      const providerInfo = detectInjectedProvider();
-      
-      debugLog('init: Environment detection complete', {
-        inIframe,
-        hasProvider: providerInfo.hasProvider,
-        providerType: providerInfo.type,
-      });
-      
-      setInMiniAppContext(inIframe);
-      setHasInjected(providerInfo.hasProvider);
-
-      // If in iframe, try to initialize UP Provider
-      if (inIframe) {
-        debugLog('init: In iframe, initializing UP Provider...');
-        try {
-          const { createClientUPProvider } = await import('@lukso/up-provider');
-          debugLog('init: UP Provider module loaded, creating provider...');
-          const provider = createClientUPProvider();
-          debugLog('init: UP Provider created successfully');
-          setUpProvider(provider);
-
-          // Event handlers
-          const handleAccountsChanged = (accounts: `0x${string}`[]) => {
-            debugLog('UP Provider accountsChanged event:', { accounts, count: accounts?.length });
-            if (accounts && accounts.length > 0) {
-              debugSuccess('UP Provider: Account connected', accounts[0]);
-              setUpState(prev => ({
-                ...prev,
-                isConnected: true,
-                isConnecting: false,
-                address: accounts[0],
-              }));
-              setWalletSource('up-provider');
-            } else {
-              debugWarn('UP Provider: Accounts cleared or empty');
-              setUpState(prev => ({
-                ...prev,
-                isConnected: false,
-                address: null,
-              }));
-            }
-          };
-
-          const handleContextAccountsChanged = (contextAccounts: `0x${string}`[]) => {
-            debugLog('UP Provider contextAccountsChanged event:', { contextAccounts, count: contextAccounts?.length });
-            if (contextAccounts && contextAccounts.length > 0) {
-              debugSuccess('UP Provider: Context account set', contextAccounts[0]);
-              setUpState(prev => ({
-                ...prev,
-                contextAddress: contextAccounts[0],
-              }));
-            }
-          };
-
-          const handleChainChanged = (chainId: number | string) => {
-            const chainIdNum = typeof chainId === 'string' ? parseInt(chainId, 16) : chainId;
-            debugLog('UP Provider chainChanged event:', { raw: chainId, parsed: chainIdNum });
-            setUpState(prev => ({
-              ...prev,
-              chainId: chainIdNum,
-            }));
-
-            // Update public client
-            const chain = chainIdNum === 42 ? lukso : luksoTestnet;
-            debugLog('UP Provider: Creating public client for chain', chainIdNum === 42 ? 'LUKSO mainnet' : 'LUKSO testnet');
-            setPublicClient(createPublicClient({ chain, transport: http() }));
-          };
-
-          // Subscribe
-          provider.on('accountsChanged', handleAccountsChanged);
-          provider.on('contextAccountsChanged', handleContextAccountsChanged);
-          provider.on('chainChanged', handleChainChanged);
-
-          // Get initial state
-          debugLog('UP Provider: Fetching initial state...');
-          try {
-            debugLog('UP Provider: Requesting eth_accounts...');
-            const accounts = await provider.request({ method: 'eth_accounts' }) as string[];
-            debugLog('UP Provider: eth_accounts response:', accounts);
-            if (accounts?.length > 0) handleAccountsChanged(accounts as `0x${string}`[]);
-
-            debugLog('UP Provider: Requesting eth_chainId...');
-            const chainIdHex = await provider.request({ method: 'eth_chainId' }) as string;
-            debugLog('UP Provider: eth_chainId response:', chainIdHex);
-            if (chainIdHex) handleChainChanged(chainIdHex);
-
-            try {
-              debugLog('UP Provider: Requesting up_contextAccounts...');
-              const contextAccounts = await provider.request({ method: 'up_contextAccounts' }) as string[];
-              debugLog('UP Provider: up_contextAccounts response:', contextAccounts);
-              if (contextAccounts?.length > 0) handleContextAccountsChanged(contextAccounts as `0x${string}`[]);
-            } catch (ctxErr) {
-              debugWarn('UP Provider: up_contextAccounts not available', ctxErr);
-            }
-          } catch (err) {
-            debugWarn('UP Provider: No initial accounts available', err);
-          }
-        } catch (error) {
-          debugError('Failed to initialize UP Provider:', error);
-        }
-      }
-
-      debugSuccess('=== INITIALIZATION COMPLETE ===');
-      setInitialized(true);
-    };
-
-    init();
+    initializeWalletContext();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Track Wagmi connection state
+  /**
+   * Initialize environment detection and UP Provider (if in iframe).
+   */
+  async function initializeWalletContext() {
+    logger.log('=== INITIALIZATION STARTING ===');
+    
+    if (typeof window === 'undefined') {
+      logger.log('SSR context, skipping initialization');
+      return;
+    }
+
+    // Detect environment
+    const inIframe = isInIframe();
+    const providerInfo = detectInjectedProvider();
+    
+    logger.log('Environment:', { inIframe, ...providerInfo });
+    
+    setInMiniAppContext(inIframe);
+    setHasInjected(providerInfo.hasProvider);
+
+    // Initialize UP Provider if in iframe
+    if (inIframe) {
+      await initializeUpProvider();
+    }
+
+    logger.success('=== INITIALIZATION COMPLETE ===');
+    setInitialized(true);
+  }
+
+  /**
+   * Initialize UP Provider for mini-app context.
+   * Sets up event listeners for account/chain changes.
+   */
+  async function initializeUpProvider() {
+    try {
+      logger.log('Initializing UP Provider...');
+      const { createClientUPProvider } = await import('@lukso/up-provider');
+      const provider = createClientUPProvider();
+      setUpProvider(provider);
+
+      // Set up event handlers
+      provider.on('accountsChanged', handleUpAccountsChanged);
+      provider.on('contextAccountsChanged', handleUpContextChanged);
+      provider.on('chainChanged', handleUpChainChanged);
+
+      // Fetch initial state
+      await fetchUpProviderState(provider);
+    } catch (err) {
+      logger.error('Failed to initialize UP Provider:', err);
+    }
+  }
+
+  // UP Provider event handlers
+  function handleUpAccountsChanged(accounts: `0x${string}`[]) {
+    logger.log('UP Provider accountsChanged:', accounts?.length);
+    if (accounts?.length > 0) {
+      logger.success('Account connected:', accounts[0]);
+      setUpState(prev => ({
+        ...prev,
+        isConnected: true,
+        isConnecting: false,
+        address: accounts[0],
+      }));
+      setWalletSource('up-provider');
+    } else {
+      logger.warn('Accounts cleared');
+      setUpState(prev => ({ ...prev, isConnected: false, address: null }));
+    }
+  }
+
+  function handleUpContextChanged(contextAccounts: `0x${string}`[]) {
+    logger.log('UP Provider contextAccountsChanged:', contextAccounts?.length);
+    if (contextAccounts?.length > 0) {
+      setUpState(prev => ({ ...prev, contextAddress: contextAccounts[0] }));
+    }
+  }
+
+  function handleUpChainChanged(chainId: number | string) {
+    const chainIdNum = typeof chainId === 'string' ? parseInt(chainId, 16) : chainId;
+    logger.log('UP Provider chainChanged:', chainIdNum);
+    setUpState(prev => ({ ...prev, chainId: chainIdNum }));
+    setPublicClient(createClientForChain(chainIdNum));
+  }
+
+  /**
+   * Fetch initial state from UP Provider.
+   */
+  async function fetchUpProviderState(provider: UPClientProvider) {
+    try {
+      // Get accounts
+      const accounts = await provider.request({ method: 'eth_accounts' }) as string[];
+      if (accounts?.length > 0) {
+        handleUpAccountsChanged(accounts as `0x${string}`[]);
+      }
+
+      // Get chain
+      const chainIdHex = await provider.request({ method: 'eth_chainId' }) as string;
+      if (chainIdHex) {
+        handleUpChainChanged(chainIdHex);
+      }
+
+      // Get context accounts (optional)
+      try {
+        const contextAccounts = await provider.request({ method: 'up_contextAccounts' }) as string[];
+        if (contextAccounts?.length > 0) {
+          handleUpContextChanged(contextAccounts as `0x${string}`[]);
+        }
+      } catch {
+        logger.warn('up_contextAccounts not available');
+      }
+    } catch (err) {
+      logger.warn('No initial accounts:', err);
+    }
+  }
+
+  // ========================================================================
+  // WAGMI STATE SYNC
+  // ========================================================================
+
   useEffect(() => {
-    debugLog('Wagmi state changed:', { wagmiConnected, wagmiAddress, wagmiChainId, upStateConnected: upState.isConnected });
     if (wagmiConnected && wagmiAddress && !upState.isConnected) {
-      debugLog('Wagmi: Setting wallet source to walletconnect');
+      logger.log('Wagmi connected:', wagmiAddress);
       setWalletSource('walletconnect');
-      
-      // Update public client based on chain
-      const chain = wagmiChainId === 42 ? lukso : luksoTestnet;
-      debugLog('Wagmi: Creating public client for chain', wagmiChainId);
-      setPublicClient(createPublicClient({ chain, transport: http() }));
+      setPublicClient(createClientForChain(wagmiChainId));
     }
   }, [wagmiConnected, wagmiAddress, wagmiChainId, upState.isConnected]);
 
-  // Determine final connection state based on priority
+  // ========================================================================
+  // COMPUTED STATE
+  // ========================================================================
+
   const isConnected = upState.isConnected || wagmiConnected;
   const isConnecting = upState.isConnecting || wagmiConnecting;
   const address = upState.address || wagmiAddress || null;
   const chainId = upState.chainId || wagmiChainId || null;
   const network = chainId ? getNetworkFromChainId(chainId) : null;
-
-  // Should show WalletConnect button?
-  // Hide if UP Provider is available and connected, or if we're in mini-app context
+  const isProviderReady = providerReady.isReady || wagmiConnected || upState.isConnected;
   const shouldShowWalletConnect = !inMiniAppContext && !upState.isConnected;
 
+  // ========================================================================
+  // ACTIONS
+  // ========================================================================
+
+  /**
+   * Connect to a wallet.
+   * Auto-detects the best source if not specified.
+   */
   const connect = useCallback(async (source?: 'up-provider' | 'injected' | 'walletconnect') => {
-    debugLog('=== CONNECT CALLED ===', { requestedSource: source });
+    logger.log('=== CONNECT CALLED ===', { source });
     setError(null);
 
-    // If no source specified, use priority logic
+    // Auto-detect source if not specified
     if (!source) {
-      debugLog('connect: No source specified, determining based on context...', {
-        inMiniAppContext,
-        hasUpProvider: !!upProvider,
-        hasInjected,
-      });
-      
-      if (inMiniAppContext && upProvider) {
-        source = 'up-provider';
-      } else if (hasInjected) {
-        source = 'injected';
-      } else {
-        source = 'walletconnect';
-      }
-      debugLog('connect: Determined source:', source);
+      source = detectBestConnectionSource();
     }
 
-    if (source === 'up-provider') {
-      debugLog('connect: Using UP Provider path (mini-app context)');
-      // In mini-app context, accounts are injected by parent
-      // Just indicate we're waiting
-      setUpState(prev => ({ ...prev, isConnecting: true }));
-      
-      // The parent should inject accounts. If after 5 seconds nothing happens, show error
-      setTimeout(() => {
-        setUpState(prev => {
-          if (prev.isConnecting && !prev.isConnected) {
-            const errMsg = 'Waiting for connection from Universal Everything. Please ensure you are connected.';
-            debugError('UP Provider connection timeout:', errMsg);
-            setError(errMsg);
-            return { ...prev, isConnecting: false };
-          }
-          return prev;
-        });
-      }, 5000);
-      return;
-    }
-
-    if (source === 'injected') {
-      debugLog('connect: Using injected provider path');
-      
-      const providerInfo = detectInjectedProvider();
-      debugLog('connect: Provider detection result:', providerInfo);
-      
-      if (!providerInfo.hasProvider || !providerInfo.provider) {
-        const errMsg = 'No injected wallet found. Please install UP Browser Extension or use WalletConnect.';
-        debugError('connect: No injected provider found');
-        setError(errMsg);
-        return;
-      }
-
-      const injected = providerInfo.provider;
-      debugLog('connect: Using provider type:', providerInfo.type);
-
-      try {
-        debugLog('connect: Requesting eth_requestAccounts...');
-        const accounts = await injected.request({ method: 'eth_requestAccounts' }) as string[];
-        debugLog('connect: eth_requestAccounts response:', { accounts, count: accounts?.length });
-        
-        debugLog('connect: Requesting eth_chainId...');
-        const chainIdHex = await injected.request({ method: 'eth_chainId' }) as string;
-        debugLog('connect: eth_chainId response:', chainIdHex);
-        
-        const chainIdNum = parseInt(chainIdHex, 16);
-        debugLog('connect: Parsed chainId:', chainIdNum);
-
-        // Always mark provider as ready - this enables first-time users without a profile
-        // to proceed to Step 2 (Search) even without an address
-        debugLog('connect: Setting provider as ready');
-        setProviderReady({
-          isReady: true,
-          chainId: chainIdNum,
-        });
-        setWalletSource('injected');
-        
-        const chainName = chainIdNum === 42 ? 'LUKSO mainnet' : 'LUKSO testnet';
-        debugLog('connect: Creating public client for', chainName);
-        const chain = chainIdNum === 42 ? lukso : luksoTestnet;
-        setPublicClient(createPublicClient({ chain, transport: http() }));
-
-        // If we got accounts, also set full connected state
-        if (accounts && accounts.length > 0) {
-          debugSuccess('connect: Connected with account:', accounts[0]);
-          setUpState({
-            isConnected: true,
-            isConnecting: false,
-            address: accounts[0] as `0x${string}`,
-            contextAddress: null,
-            chainId: chainIdNum,
-          });
-        } else {
-          // No profile address yet - but provider is ready
-          // User can proceed to search for/create a profile
-          debugWarn('connect: Extension connected but no profile address - first-time user flow');
-          setUpState({
-            isConnected: false,
-            isConnecting: false,
-            address: null,
-            contextAddress: null,
-            chainId: chainIdNum,
-          });
-        }
-        debugSuccess('=== CONNECT COMPLETED SUCCESSFULLY ===');
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to connect';
-        const errorCode = (err as { code?: number })?.code;
-        const errorDetails = {
-          message: errorMessage,
-          name: err instanceof Error ? err.name : 'Unknown',
-          code: errorCode,
-          fullError: err,
-        };
-        
-        // Error code -32001: Extension is connected but no Universal Profile is attached yet
-        // This is a valid state for first-time users who need to search for/select a profile
-        if (errorCode === -32001) {
-          debugLog('connect: Error -32001 detected - Extension connected, no profile attached yet');
-          debugSuccess('connect: Treating as successful connection for first-time user flow');
-          
-          // Get chain ID since extension is working
-          try {
-            const chainIdHex = await injected.request({ method: 'eth_chainId' }) as string;
-            const chainIdNum = parseInt(chainIdHex, 16);
-            debugLog('connect: Chain ID from extension:', chainIdNum);
-            
-            const chainName = chainIdNum === 42 ? 'LUKSO mainnet' : 'LUKSO testnet';
-            debugLog('connect: Creating public client for', chainName);
-            const chain = chainIdNum === 42 ? lukso : luksoTestnet;
-            setPublicClient(createPublicClient({ chain, transport: http() }));
-            
-            // Mark provider as ready - user can proceed to search for a profile
-            setProviderReady({
-              isReady: true,
-              chainId: chainIdNum,
-            });
-            setWalletSource('injected');
-            
-            // No profile address, but provider is ready
-            setUpState({
-              isConnected: false,
-              isConnecting: false,
-              address: null,
-              contextAddress: null,
-              chainId: chainIdNum,
-            });
-            
-            debugSuccess('=== CONNECT COMPLETED (FIRST-TIME USER) ===');
-            return;
-          } catch (chainErr) {
-            debugError('connect: Failed to get chainId after -32001:', chainErr);
-          }
-        }
-        
-        debugError('connect: eth_requestAccounts failed:', errorDetails);
-        setError(errorMessage);
-        setProviderReady({ isReady: false, chainId: null });
-      }
-      return;
-    }
-
-    // WalletConnect
-    debugLog('connect: Using WalletConnect path');
-    try {
-      debugLog('connect: Opening AppKit...');
-      await openAppKit();
-      debugSuccess('connect: AppKit opened');
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to open WalletConnect';
-      debugError('connect: WalletConnect failed:', err);
-      setError(errorMessage);
+    switch (source) {
+      case 'up-provider':
+        await connectUpProvider();
+        break;
+      case 'injected':
+        await connectInjectedProvider();
+        break;
+      case 'walletconnect':
+        await connectWalletConnect();
+        break;
     }
   }, [inMiniAppContext, upProvider, hasInjected, openAppKit]);
 
+  /**
+   * Determine the best connection source based on environment.
+   */
+  function detectBestConnectionSource(): 'up-provider' | 'injected' | 'walletconnect' {
+    if (inMiniAppContext && upProvider) return 'up-provider';
+    if (hasInjected) return 'injected';
+    return 'walletconnect';
+  }
+
+  /**
+   * Connect via UP Provider (mini-app context).
+   */
+  async function connectUpProvider() {
+    logger.log('Connecting via UP Provider');
+    setUpState(prev => ({ ...prev, isConnecting: true }));
+    
+    // Parent injects accounts - timeout if nothing happens
+    setTimeout(() => {
+      setUpState(prev => {
+        if (prev.isConnecting && !prev.isConnected) {
+          setError('Waiting for connection from Universal Everything. Please ensure you are connected.');
+          return { ...prev, isConnecting: false };
+        }
+        return prev;
+      });
+    }, 5000);
+  }
+
+  /**
+   * Connect via injected provider (extension).
+   * Handles the error -32001 case for first-time users without a profile.
+   */
+  async function connectInjectedProvider() {
+    logger.log('Connecting via injected provider');
+    
+    const providerInfo = detectInjectedProvider();
+    if (!providerInfo.hasProvider || !providerInfo.provider) {
+      setError('No injected wallet found. Please install UP Browser Extension or use WalletConnect.');
+      return;
+    }
+
+    const injected = providerInfo.provider;
+
+    try {
+      // Request accounts
+      const accounts = await injected.request({ method: 'eth_requestAccounts' }) as string[];
+      const chainIdHex = await injected.request({ method: 'eth_chainId' }) as string;
+      const chainIdNum = parseInt(chainIdHex, 16);
+
+      // Always mark provider as ready
+      setProviderReady({ isReady: true, chainId: chainIdNum });
+      setWalletSource('injected');
+      setPublicClient(createClientForChain(chainIdNum));
+
+      if (accounts?.length > 0) {
+        logger.success('Connected with account:', accounts[0]);
+        setUpState({
+          isConnected: true,
+          isConnecting: false,
+          address: accounts[0] as `0x${string}`,
+          contextAddress: null,
+          chainId: chainIdNum,
+        });
+      } else {
+        // No profile yet - first-time user flow
+        logger.warn('Connected but no profile address - first-time user');
+        setUpState({
+          isConnected: false,
+          isConnecting: false,
+          address: null,
+          contextAddress: null,
+          chainId: chainIdNum,
+        });
+      }
+    } catch (err) {
+      const errorCode = (err as { code?: number })?.code;
+      
+      // Error -32001: Extension connected but no profile attached
+      if (errorCode === -32001) {
+        logger.log('Error -32001: First-time user flow');
+        await handleFirstTimeUserConnection(injected);
+        return;
+      }
+      
+      logger.error('Connection failed:', err);
+      setError(err instanceof Error ? err.message : 'Failed to connect');
+      setProviderReady({ isReady: false, chainId: null });
+    }
+  }
+
+  /**
+   * Handle the first-time user case where extension is connected
+   * but no profile is attached yet (error -32001).
+   */
+  async function handleFirstTimeUserConnection(injected: EIP1193Provider) {
+    try {
+      const chainIdHex = await injected.request({ method: 'eth_chainId' }) as string;
+      const chainIdNum = parseInt(chainIdHex, 16);
+      
+      setProviderReady({ isReady: true, chainId: chainIdNum });
+      setWalletSource('injected');
+      setPublicClient(createClientForChain(chainIdNum));
+      
+      setUpState({
+        isConnected: false,
+        isConnecting: false,
+        address: null,
+        contextAddress: null,
+        chainId: chainIdNum,
+      });
+      
+      logger.success('First-time user: Provider ready, no profile');
+    } catch (chainErr) {
+      logger.error('Failed to get chainId:', chainErr);
+    }
+  }
+
+  /**
+   * Connect via WalletConnect.
+   */
+  async function connectWalletConnect() {
+    logger.log('Connecting via WalletConnect');
+    try {
+      await openAppKit();
+    } catch (err) {
+      logger.error('WalletConnect failed:', err);
+      setError(err instanceof Error ? err.message : 'Failed to open WalletConnect');
+    }
+  }
+
+  /**
+   * Disconnect the current wallet.
+   */
   const disconnect = useCallback(() => {
-    debugLog('=== DISCONNECT CALLED ===', { walletSource });
+    logger.log('=== DISCONNECT ===', { walletSource });
+    
     if (walletSource === 'walletconnect') {
-      debugLog('disconnect: Calling wagmiDisconnect');
       wagmiDisconnect();
     }
     
-    debugLog('disconnect: Resetting all state');
     setUpState({
       isConnected: false,
       isConnecting: false,
@@ -537,9 +582,13 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     setProviderReady({ isReady: false, chainId: null });
     setWalletSource(null);
     setError(null);
-    debugSuccess('disconnect: Complete');
+    
+    logger.success('Disconnected');
   }, [walletSource, wagmiDisconnect]);
 
+  /**
+   * Send a transaction through the connected wallet.
+   */
   const sendTransaction = useCallback(async (params: {
     to: `0x${string}`;
     data: `0x${string}`;
@@ -551,40 +600,34 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     }
 
     try {
-      // If using UP Provider, use it directly
+      const txParams = {
+        from: address,
+        to: params.to,
+        data: params.data,
+        value: params.value ? `0x${params.value.toString(16)}` : '0x0',
+      };
+
+      // Use UP Provider or injected provider directly
       if (walletSource === 'up-provider' && upProvider) {
         const txHash = await upProvider.request({
           method: 'eth_sendTransaction',
-          params: [{
-            from: address,
-            to: params.to,
-            data: params.data,
-            value: params.value ? `0x${params.value.toString(16)}` : '0x0',
-          }],
+          params: [txParams],
         }) as string;
         return txHash as `0x${string}`;
       }
 
-      // If using injected provider, use it directly
       if (walletSource === 'injected') {
-        const injected = (window as { lukso?: EIP1193Provider }).lukso || 
-                         (window as { ethereum?: EIP1193Provider }).ethereum;
-        
+        const injected = detectInjectedProvider().provider;
         if (injected) {
           const txHash = await injected.request({
             method: 'eth_sendTransaction',
-            params: [{
-              from: address,
-              to: params.to,
-              data: params.data,
-              value: params.value ? `0x${params.value.toString(16)}` : '0x0',
-            }],
+            params: [txParams],
           }) as string;
           return txHash as `0x${string}`;
         }
       }
 
-      // Use Wagmi for WalletConnect
+      // Fall back to Wagmi for WalletConnect
       const hash = await sendTransactionAsync({
         to: params.to,
         data: params.data,
@@ -592,12 +635,15 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       });
       return hash;
     } catch (err) {
-      console.error('[WalletContext] Transaction error:', err);
+      logger.error('Transaction failed:', err);
       setError(err instanceof Error ? err.message : 'Transaction failed');
       return null;
     }
   }, [isConnected, address, walletSource, upProvider, sendTransactionAsync]);
 
+  /**
+   * Open the WalletConnect modal.
+   */
   const openWalletConnect = useCallback(async () => {
     try {
       await openAppKit();
@@ -607,116 +653,86 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
   }, [openAppKit]);
 
   /**
-   * Check if an address is a contract (vs EOA)
-   * Returns true if the address has code deployed (is a contract)
+   * Check if an address is a smart contract (has deployed code).
    */
   const isContractAddress = useCallback(async (addr: `0x${string}`): Promise<boolean> => {
-    if (!publicClient) {
-      // Create a client if we don't have one
-      const chain = chainId === 42 ? lukso : luksoTestnet;
-      const client = createPublicClient({ chain, transport: http() });
-      const code = await client.getCode({ address: addr });
-      return code !== undefined && code !== '0x';
-    }
+    const client = publicClient || createClientForChain(chainId ?? 4201);
     
     try {
-      const code = await publicClient.getCode({ address: addr });
+      const code = await client.getCode({ address: addr });
       return code !== undefined && code !== '0x';
     } catch (err) {
-      console.error('[WalletContext] Error checking if address is contract:', err);
+      logger.error('Error checking contract address:', err);
       return false;
     }
   }, [publicClient, chainId]);
 
   /**
-   * Request UP import - asks the wallet/provider to provide a controller address
-   * for the specified Universal Profile.
+   * Request up_import - asks the wallet/provider to provide a controller
+   * address for the specified Universal Profile.
    * 
-   * This works on any provider that supports the up_import method:
-   * - UP Provider (mini-app context): Parent app handles authorization
-   * - Injected wallet: If the wallet supports up_import
-   * - WalletConnect: If the connected wallet supports up_import
+   * Works on any provider that supports the up_import method:
+   * - UP Provider (mini-app context)
+   * - Injected wallet (if supported)
    */
   const requestUpImport = useCallback(async (
     profileAddress: `0x${string}`
   ): Promise<{ controllerAddress: `0x${string}` } | null> => {
-    debugLog('=== UP_IMPORT CALLED ===', { profileAddress });
+    logger.log('=== UP_IMPORT ===', { profileAddress });
     
-    // Try UP Provider first (highest priority in mini-app context)
+    // Try UP Provider first
     if (upProvider) {
-      try {
-        debugLog('up_import: Trying via UP Provider...');
-        const result = await upProvider.request({
-          method: 'up_import',
-          params: [profileAddress],
-        });
-        
-        debugLog('up_import: UP Provider response:', { result, type: typeof result });
-        
-        // The result should contain the controller address that was authorized
-        if (result && typeof result === 'string') {
-          debugSuccess('up_import: Succeeded via UP Provider (string):', result);
-          return { controllerAddress: result as `0x${string}` };
-        } else if (result && typeof result === 'object' && 'controllerAddress' in (result as object)) {
-          debugSuccess('up_import: Succeeded via UP Provider (object):', result);
-          return result as { controllerAddress: `0x${string}` };
-        }
-        
-        debugWarn('up_import: Unexpected result format from UP Provider:', result);
-      } catch (err) {
-        debugWarn('up_import: Not available via UP Provider:', {
-          message: err instanceof Error ? err.message : 'Unknown error',
-          code: (err as { code?: number })?.code,
-          error: err,
-        });
-      }
-    } else {
-      debugLog('up_import: No UP Provider available, skipping');
+      const result = await tryUpImportOnProvider(upProvider, profileAddress, 'UP Provider');
+      if (result) return result;
     }
     
     // Try injected provider
     const providerInfo = detectInjectedProvider();
-    debugLog('up_import: Checking injected provider:', providerInfo);
-    
     if (providerInfo.hasProvider && providerInfo.provider) {
-      try {
-        debugLog('up_import: Trying via injected provider (' + providerInfo.type + ')...');
-        const result = await providerInfo.provider.request({
-          method: 'up_import',
-          params: [profileAddress],
-        });
-        
-        debugLog('up_import: Injected provider response:', { result, type: typeof result });
-        
-        if (result && typeof result === 'string') {
-          debugSuccess('up_import: Succeeded via injected provider (string):', result);
-          return { controllerAddress: result as `0x${string}` };
-        } else if (result && typeof result === 'object' && 'controllerAddress' in (result as object)) {
-          debugSuccess('up_import: Succeeded via injected provider (object):', result);
-          return result as { controllerAddress: `0x${string}` };
-        }
-        
-        debugWarn('up_import: Unexpected result format from injected provider:', result);
-      } catch (err) {
-        debugWarn('up_import: Not available via injected provider:', {
-          message: err instanceof Error ? err.message : 'Unknown error',
-          code: (err as { code?: number })?.code,
-          error: err,
-        });
-      }
+      const result = await tryUpImportOnProvider(providerInfo.provider, profileAddress, 'injected');
+      if (result) return result;
     }
     
-    debugLog('up_import: Not available on any provider, returning null');
+    logger.log('up_import not available on any provider');
     return null;
   }, [upProvider]);
 
-  // Compute isProviderReady: true if provider is connected (even without address)
-  // or if we have a wagmi connection
-  const isProviderReady = providerReady.isReady || wagmiConnected || upState.isConnected;
+  /**
+   * Try to call up_import on a specific provider.
+   */
+  async function tryUpImportOnProvider(
+    provider: EIP1193Provider | UPClientProvider,
+    profileAddress: `0x${string}`,
+    providerName: string
+  ): Promise<{ controllerAddress: `0x${string}` } | null> {
+    try {
+      logger.log(`Trying up_import via ${providerName}...`);
+      const result = await provider.request({
+        method: 'up_import',
+        params: [profileAddress],
+      });
+      
+      if (result && typeof result === 'string') {
+        logger.success(`up_import succeeded (${providerName}):`, result);
+        return { controllerAddress: result as `0x${string}` };
+      } else if (result && typeof result === 'object' && 'controllerAddress' in (result as object)) {
+        logger.success(`up_import succeeded (${providerName}):`, result);
+        return result as { controllerAddress: `0x${string}` };
+      }
+      
+      logger.warn(`Unexpected up_import result format:`, result);
+    } catch (err) {
+      logger.warn(`up_import not available via ${providerName}:`, err);
+    }
+    return null;
+  }
 
-  // Log state changes periodically (only when values actually change)
+  // ========================================================================
+  // DEBUG LOGGING
+  // ========================================================================
+
   useEffect(() => {
-    debugLog('State update:', {
+    logger.log('State:', {
       isConnected,
       isConnecting,
       address,
@@ -725,14 +741,12 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       chainId,
       network,
       error,
-      upState: {
-        isConnected: upState.isConnected,
-        isConnecting: upState.isConnecting,
-        address: upState.address,
-      },
-      providerReady,
     });
-  }, [isConnected, isConnecting, address, isProviderReady, walletSource, chainId, network, error, upState, providerReady]);
+  }, [isConnected, isConnecting, address, isProviderReady, walletSource, chainId, network, error]);
+
+  // ========================================================================
+  // RENDER
+  // ========================================================================
 
   const value: WalletContextValue = {
     isConnected,
@@ -769,6 +783,30 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
   );
 }
 
+// ============================================================================
+// HOOK
+// ============================================================================
+
+/**
+ * Hook to access wallet context.
+ * Must be used within WalletContextProvider.
+ * 
+ * @returns Wallet context with state and actions
+ * @throws Error if used outside of WalletContextProvider
+ * 
+ * @example
+ * ```tsx
+ * function MyComponent() {
+ *   const { isConnected, address, connect } = useWallet();
+ *   
+ *   if (!isConnected) {
+ *     return <button onClick={() => connect()}>Connect</button>;
+ *   }
+ *   
+ *   return <p>Connected: {address}</p>;
+ * }
+ * ```
+ */
 export function useWallet() {
   const context = useContext(WalletContext);
   if (!context) {
