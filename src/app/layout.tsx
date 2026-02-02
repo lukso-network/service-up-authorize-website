@@ -88,7 +88,7 @@ export default function RootLayout({
             <footer className="border-t py-6">
               <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
                 <p>Universal Profile import app — Built for the LUKSO ecosystem</p>
-                <p className="mt-1 text-xs opacity-50">v16</p>
+                <p className="mt-1 text-xs opacity-50">v18</p>
               </div>
             </footer>
           </div>

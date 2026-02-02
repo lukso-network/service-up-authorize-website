@@ -6,10 +6,16 @@ import type { AppKitNetwork } from '@reown/appkit/networks';
 // Get projectId from environment
 // A valid project ID is required for WalletConnect to work
 // Get one from https://cloud.reown.com/
-export const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '';
+// Note: A placeholder is required for WagmiAdapter initialization
+const PLACEHOLDER_PROJECT_ID = 'placeholder-project-id';
+export const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || PLACEHOLDER_PROJECT_ID;
 
-// Check if WalletConnect is properly configured
-export const isWalletConnectConfigured = Boolean(projectId && projectId !== 'demo-project-id');
+// Check if WalletConnect is properly configured (not using placeholder)
+export const isWalletConnectConfigured = Boolean(
+  projectId && 
+  projectId !== PLACEHOLDER_PROJECT_ID && 
+  projectId !== 'demo-project-id'
+);
 
 // Define LUKSO chains for AppKit
 export const luksoMainnet: AppKitNetwork = {
