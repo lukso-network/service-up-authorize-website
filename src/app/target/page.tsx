@@ -37,6 +37,7 @@ export default function TargetPage() {
     contextAddress,
     requestUpImport,
     isContractAddress,
+    isProviderReady,
   } = useWallet();
 
   const [step, setStep] = useState(0);
@@ -47,16 +48,17 @@ export default function TargetPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
 
-  // Auto-advance to step 1 when connected
+  // Auto-advance to step 1 when provider is ready (even without address for first-time users)
   useEffect(() => {
-    if (isConnected && step === 0) {
+    if ((isConnected || isProviderReady) && step === 0) {
       setStep(1);
     }
-  }, [isConnected, step]);
+  }, [isConnected, isProviderReady, step]);
 
   // Handle connection state changes
+  // Allow progression even without address for first-time users
   const handleContinueAfterConnect = () => {
-    if (isConnected) {
+    if (isConnected || isProviderReady) {
       setStep(1);
       setError(null);
     }
@@ -71,8 +73,16 @@ export default function TargetPage() {
   // Step 3: Generate authorization link
   // CRITICAL: We must get the correct controller address from up_import
   const handleGenerateAuth = async () => {
-    if (!selectedProfile || !network || !address) {
-      setError('Missing profile, network, or wallet connection');
+    // For first-time users, address might be null but we can still proceed
+    // if the provider is ready and we can get a controller via up_import
+    if (!selectedProfile || !network) {
+      setError('Missing profile or network information');
+      return;
+    }
+
+    // Check that we have either an address OR a ready provider (for up_import)
+    if (!address && !isProviderReady) {
+      setError('Wallet connection required');
       return;
     }
 
@@ -86,6 +96,7 @@ export default function TargetPage() {
 
       // Step 1: Try to get controller address via up_import
       // This is the CORRECT way to get the controller address
+      // For first-time users without an address, this is the ONLY way
       setImportStatus('importing');
       
       try {
@@ -128,6 +139,18 @@ export default function TargetPage() {
       // Step 2: If up_import didn't return a controller, check if connected address is an EOA
       if (!controllerAddress) {
         console.log('[Target] up_import did not return controller, checking connected address...');
+        
+        // For first-time users without an address, we can't proceed without up_import
+        if (!address) {
+          setError(
+            'Your wallet extension is connected but did not provide a profile address. ' +
+            'The up_import method is also not available. Please ensure your wallet extension ' +
+            'supports UP import, or connect with a wallet that has an existing profile.'
+          );
+          setImportStatus('failed');
+          setIsGenerating(false);
+          return;
+        }
         
         // Verify the connected address is an EOA (not a contract/UP)
         const isContract = await isContractAddress(address);
@@ -245,6 +268,21 @@ export default function TargetPage() {
                 )}
                 <Button onClick={handleContinueAfterConnect} size="lg">
                   Continue
+                </Button>
+              </div>
+            ) : isProviderReady ? (
+              // First-time user flow: extension connected but no profile address yet
+              <div className="text-center space-y-4">
+                <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                  <p className="text-sm text-green-700 dark:text-green-400">
+                    ✓ Extension connected
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    No profile address found — search for or create a profile in the next step
+                  </p>
+                </div>
+                <Button onClick={handleContinueAfterConnect} size="lg">
+                  Continue to Search
                 </Button>
               </div>
             ) : (

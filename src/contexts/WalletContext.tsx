@@ -31,6 +31,13 @@ interface WalletContextState {
   isInMiniAppContext: boolean;
   hasInjectedProvider: boolean;
   
+  /**
+   * Indicates if a provider is connected and ready for RPC calls,
+   * even if no profile address was returned.
+   * This allows first-time users without a profile to proceed to Step 2.
+   */
+  isProviderReady: boolean;
+  
   // Clients
   publicClient: PublicClient | null;
   upProvider: UPClientProvider | null;
@@ -79,6 +86,16 @@ interface WalletContextProviderProps {
   children: ReactNode;
 }
 
+/**
+ * State for tracking provider readiness separate from having an address.
+ * This allows first-time users (who may not have a profile yet) to connect
+ * the extension and proceed to search for/create a profile.
+ */
+interface ProviderReadyState {
+  isReady: boolean;
+  chainId: number | null;
+}
+
 export function WalletContextProvider({ children }: WalletContextProviderProps) {
   // Wagmi/Reown state
   const { address: wagmiAddress, isConnected: wagmiConnected, isConnecting: wagmiConnecting } = useAccount();
@@ -110,6 +127,13 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
   const [error, setError] = useState<string | null>(null);
   const [publicClient, setPublicClient] = useState<PublicClient | null>(null);
   const [initialized, setInitialized] = useState(false);
+  
+  // Provider readiness state - tracks if provider is connected even without address
+  // This allows first-time users (who may not have a profile yet) to proceed
+  const [providerReady, setProviderReady] = useState<ProviderReadyState>({
+    isReady: false,
+    chainId: null,
+  });
 
   // Initialize environment detection and UP Provider
   useEffect(() => {
@@ -273,19 +297,41 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
         const chainIdHex = await injected.request({ method: 'eth_chainId' }) as string;
         const chainIdNum = parseInt(chainIdHex, 16);
 
-        setUpState({
-          isConnected: true,
-          isConnecting: false,
-          address: accounts[0] as `0x${string}`,
-          contextAddress: null,
+        // Always mark provider as ready - this enables first-time users without a profile
+        // to proceed to Step 2 (Search) even without an address
+        setProviderReady({
+          isReady: true,
           chainId: chainIdNum,
         });
         setWalletSource('injected');
         
         const chain = chainIdNum === 42 ? lukso : luksoTestnet;
         setPublicClient(createPublicClient({ chain, transport: http() }));
+
+        // If we got accounts, also set full connected state
+        if (accounts && accounts.length > 0) {
+          setUpState({
+            isConnected: true,
+            isConnecting: false,
+            address: accounts[0] as `0x${string}`,
+            contextAddress: null,
+            chainId: chainIdNum,
+          });
+        } else {
+          // No profile address yet - but provider is ready
+          // User can proceed to search for/create a profile
+          console.log('[WalletContext] Extension connected but no profile address - first-time user flow');
+          setUpState({
+            isConnected: false,
+            isConnecting: false,
+            address: null,
+            contextAddress: null,
+            chainId: chainIdNum,
+          });
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to connect');
+        setProviderReady({ isReady: false, chainId: null });
       }
       return;
     }
@@ -310,6 +356,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       contextAddress: null,
       chainId: null,
     });
+    setProviderReady({ isReady: false, chainId: null });
     setWalletSource(null);
     setError(null);
   }, [walletSource, wagmiDisconnect]);
@@ -466,6 +513,10 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     return null;
   }, [upProvider]);
 
+  // Compute isProviderReady: true if provider is connected (even without address)
+  // or if we have a wagmi connection
+  const isProviderReady = providerReady.isReady || wagmiConnected || upState.isConnected;
+
   const value: WalletContextValue = {
     isConnected,
     isConnecting,
@@ -477,6 +528,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     walletSource,
     isInMiniAppContext: inMiniAppContext,
     hasInjectedProvider: hasInjected,
+    isProviderReady,
     publicClient,
     upProvider,
     connect,
