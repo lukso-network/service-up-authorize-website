@@ -79,7 +79,6 @@ describe('Permissions', () => {
 
   describe('PERMISSION_PRESETS', () => {
     it('should have valid preset combinations', () => {
-      expect(PERMISSION_PRESETS.ADMIN_CONTROL).toBeGreaterThan(0n);
       expect(PERMISSION_PRESETS.FULL_CONTROL).toBeGreaterThan(0n);
       expect(PERMISSION_PRESETS.STANDARD_WALLET).toBeGreaterThan(0n);
     });
@@ -92,22 +91,33 @@ describe('Permissions', () => {
     });
 
     it('All presets should include EXECUTE_RELAY_CALL', () => {
-      expect(hasPermission(PERMISSION_PRESETS.ADMIN_CONTROL, PERMISSIONS.EXECUTE_RELAY_CALL)).toBe(true);
       expect(hasPermission(PERMISSION_PRESETS.FULL_CONTROL, PERMISSIONS.EXECUTE_RELAY_CALL)).toBe(true);
       expect(hasPermission(PERMISSION_PRESETS.STANDARD_WALLET, PERMISSIONS.EXECUTE_RELAY_CALL)).toBe(true);
     });
 
-    it('ADMIN_CONTROL should NOT include DELEGATECALL permissions', () => {
-      const admin = PERMISSION_PRESETS.ADMIN_CONTROL;
-      expect(hasPermission(admin, PERMISSIONS.DELEGATECALL)).toBe(false);
-      expect(hasPermission(admin, PERMISSIONS.SUPER_DELEGATECALL)).toBe(false);
+    it('FULL_CONTROL should have more permissions than STANDARD_WALLET', () => {
+      // FULL_CONTROL includes operational permissions like DEPLOY, ENCRYPT, DECRYPT, extensions
+      const fc = PERMISSION_PRESETS.FULL_CONTROL;
+      const sw = PERMISSION_PRESETS.STANDARD_WALLET;
+      expect(fc).toBeGreaterThan(sw);
+      expect(hasPermission(fc, PERMISSIONS.DEPLOY)).toBe(true);
+      expect(hasPermission(fc, PERMISSIONS.ENCRYPT)).toBe(true);
+      expect(hasPermission(fc, PERMISSIONS.DECRYPT)).toBe(true);
+      // STANDARD_WALLET should not have these
+      expect(hasPermission(sw, PERMISSIONS.DEPLOY)).toBe(false);
+      expect(hasPermission(sw, PERMISSIONS.ENCRYPT)).toBe(false);
     });
 
-    it('ADMIN_CONTROL should include controller management permissions', () => {
-      const admin = PERMISSION_PRESETS.ADMIN_CONTROL;
-      expect(hasPermission(admin, PERMISSIONS.ADDCONTROLLER)).toBe(true);
-      expect(hasPermission(admin, PERMISSIONS.EDITPERMISSIONS)).toBe(true);
-      expect(hasPermission(admin, PERMISSIONS.CHANGEOWNER)).toBe(true);
+    it('Neither preset should include admin permissions', () => {
+      // Both presets should NOT include dangerous admin permissions
+      const fc = PERMISSION_PRESETS.FULL_CONTROL;
+      const sw = PERMISSION_PRESETS.STANDARD_WALLET;
+      expect(hasPermission(fc, PERMISSIONS.CHANGEOWNER)).toBe(false);
+      expect(hasPermission(fc, PERMISSIONS.ADDCONTROLLER)).toBe(false);
+      expect(hasPermission(fc, PERMISSIONS.EDITPERMISSIONS)).toBe(false);
+      expect(hasPermission(sw, PERMISSIONS.CHANGEOWNER)).toBe(false);
+      expect(hasPermission(sw, PERMISSIONS.ADDCONTROLLER)).toBe(false);
+      expect(hasPermission(sw, PERMISSIONS.EDITPERMISSIONS)).toBe(false);
     });
   });
 });

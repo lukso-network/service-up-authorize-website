@@ -474,6 +474,9 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     }
 
     const injected = providerInfo.provider;
+    
+    // Set connecting state at the start
+    setUpState(prev => ({ ...prev, isConnecting: true }));
 
     try {
       // Request accounts
@@ -519,6 +522,8 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       logger.error('Connection failed:', err);
       setError(err instanceof Error ? err.message : 'Failed to connect');
       setProviderReady({ isReady: false, chainId: null });
+      // Reset connecting state on error
+      setUpState(prev => ({ ...prev, isConnecting: false }));
     }
   }
 
@@ -546,6 +551,8 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       logger.success('First-time user: Provider ready, no profile');
     } catch (chainErr) {
       logger.error('Failed to get chainId:', chainErr);
+      // Reset connecting state on error
+      setUpState(prev => ({ ...prev, isConnecting: false }));
     }
   }
 

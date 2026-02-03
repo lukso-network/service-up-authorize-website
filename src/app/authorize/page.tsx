@@ -18,8 +18,8 @@ import { extractAuthPackageFromURL } from '@/lib/auth-package/decode';
 import { shortenAddress } from '@/lib/utils/format';
 import { lukso, luksoTestnet } from '@/lib/utils/chains';
 import { getEndpoints } from '@/constants/endpoints';
-import { PERMISSION_PRESETS, getActivePermissions, PERMISSION_LABELS, PERMISSIONS, hasPermission } from '@/constants/permissions';
-import { buildSetDataTransaction, getControllerPermissions } from '@/lib/lsp6/transaction';
+import { PERMISSION_PRESETS, getActivePermissions, PERMISSION_LABELS, PERMISSIONS } from '@/constants/permissions';
+import { buildSetDataTransaction } from '@/lib/lsp6/transaction';
 import type { AuthorizationPackage } from '@/types/auth-package';
 
 function AuthorizeContent() {
@@ -99,47 +99,30 @@ function AuthorizeContent() {
   }, [txHash, status, authPackage?.network]);
 
   // Validate that connected wallet can authorize this profile
+  // The connected wallet must BE the profile (not just a controller)
+  // This is because users connect their UP directly, which returns the profile address
   useEffect(() => {
     if (!isConnected || !address || !authPackage) {
       setProfileMatchError(null);
       return;
     }
 
-    const validateController = async () => {
-      setIsValidatingController(true);
-      setProfileMatchError(null);
+    setIsValidatingController(true);
+    setProfileMatchError(null);
 
-      try {
-        const chain = authPackage.network === 'mainnet' ? lukso : luksoTestnet;
-        const client = createPublicClient({ chain, transport: http() });
-
-        // Check if the connected address has controller permissions on the profile
-        const controllerPermissions = await getControllerPermissions(
-          client,
-          authPackage.profileAddress,
-          address
-        );
-
-        // Address must have either ADDCONTROLLER or EDITPERMISSIONS to authorize new controllers
-        const canAddController = controllerPermissions !== null && 
-          (hasPermission(controllerPermissions, PERMISSIONS.ADDCONTROLLER) || 
-           hasPermission(controllerPermissions, PERMISSIONS.EDITPERMISSIONS));
-
-        if (!canAddController) {
-          setProfileMatchError(
-            `Connected wallet ${shortenAddress(address)} is not authorized to manage controllers for this profile. ` +
-            `Please connect a wallet that has controller permissions for ${shortenAddress(authPackage.profileAddress)}.`
-          );
-        }
-      } catch (err) {
-        console.error('Error validating controller:', err);
-        setProfileMatchError('Failed to validate controller permissions. Please try again.');
-      } finally {
-        setIsValidatingController(false);
-      }
-    };
-
-    validateController();
+    // Check if connected wallet address matches the profile address
+    // Users connect devices that return the profile address directly
+    const connectedAddressLower = address.toLowerCase();
+    const profileAddressLower = authPackage.profileAddress.toLowerCase();
+    
+    if (connectedAddressLower !== profileAddressLower) {
+      setProfileMatchError(
+        `Connected wallet ${shortenAddress(address)} does not match the profile being authorized. ` +
+        `Please connect the Universal Profile ${shortenAddress(authPackage.profileAddress)} directly.`
+      );
+    }
+    
+    setIsValidatingController(false);
   }, [isConnected, address, authPackage]);
 
   const handleAuthorize = async () => {

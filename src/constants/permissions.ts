@@ -86,24 +86,20 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
 // Standard permission presets for common use cases
 // Note: All presets MUST include EXECUTE_RELAY_CALL for relay transaction support
 export const PERMISSION_PRESETS = {
-  // Admin control - ALL permissions EXCEPT delegate call
-  // This is the most permissive option, allowing full control of the profile
-  ADMIN_CONTROL:
-    PERMISSIONS.CHANGEOWNER |
-    PERMISSIONS.ADDCONTROLLER |
-    PERMISSIONS.EDITPERMISSIONS |
+  // Full control - comprehensive operational permissions (like browser extension default)
+  // Includes all transaction, data, deployment, and cryptographic permissions
+  // Does NOT include admin permissions (CHANGEOWNER, ADDCONTROLLER, EDITPERMISSIONS)
+  FULL_CONTROL:
     PERMISSIONS.ADDEXTENSIONS |
     PERMISSIONS.CHANGEEXTENSIONS |
     PERMISSIONS.ADDUNIVERSALRECEIVERDELEGATE |
     PERMISSIONS.CHANGEUNIVERSALRECEIVERDELEGATE |
-    PERMISSIONS.REENTRANCY |
     PERMISSIONS.SUPER_TRANSFERVALUE |
     PERMISSIONS.TRANSFERVALUE |
     PERMISSIONS.SUPER_CALL |
     PERMISSIONS.CALL |
     PERMISSIONS.SUPER_STATICCALL |
     PERMISSIONS.STATICCALL |
-    // SUPER_DELEGATECALL and DELEGATECALL intentionally excluded
     PERMISSIONS.DEPLOY |
     PERMISSIONS.SUPER_SETDATA |
     PERMISSIONS.SETDATA |
@@ -112,16 +108,8 @@ export const PERMISSION_PRESETS = {
     PERMISSIONS.SIGN |
     PERMISSIONS.EXECUTE_RELAY_CALL,
 
-  // Full control (like browser extension default) - standard usage permissions
-  FULL_CONTROL:
-    PERMISSIONS.SUPER_TRANSFERVALUE |
-    PERMISSIONS.SUPER_CALL |
-    PERMISSIONS.SUPER_STATICCALL |
-    PERMISSIONS.SUPER_SETDATA |
-    PERMISSIONS.SIGN |
-    PERMISSIONS.EXECUTE_RELAY_CALL,
-
-  // Standard wallet permissions (can transact but not modify permissions)
+  // Standard wallet permissions - basic daily use (send tokens, interact with dApps)
+  // Minimal but sufficient for most users
   STANDARD_WALLET:
     PERMISSIONS.SUPER_TRANSFERVALUE |
     PERMISSIONS.SUPER_CALL |
@@ -134,15 +122,13 @@ export const PERMISSION_PRESETS = {
 export type PresetKey = keyof typeof PERMISSION_PRESETS;
 
 export const PRESET_LABELS: Record<PresetKey, string> = {
-  ADMIN_CONTROL: 'Admin Control',
   FULL_CONTROL: 'Full Control',
   STANDARD_WALLET: 'Standard Wallet',
 };
 
 export const PRESET_DESCRIPTIONS: Record<PresetKey, string> = {
-  ADMIN_CONTROL: 'Complete access including controller management (no delegate call)',
-  FULL_CONTROL: 'Full transaction, data, and relay call support',
-  STANDARD_WALLET: 'Standard transaction and data access with relay support',
+  FULL_CONTROL: 'Complete operational access: transactions, data, deployment, extensions, and cryptographic operations',
+  STANDARD_WALLET: 'Basic daily use: send tokens, interact with dApps, sign messages',
 };
 
 // Permission groups for UI organization
