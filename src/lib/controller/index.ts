@@ -37,15 +37,7 @@ export interface GetControllerAddressResult {
 // ERROR MESSAGES
 // ============================================================================
 
-/**
- * Error message shown when connected address is a smart contract
- * and up_import is not available.
- */
-const CONTRACT_ADDRESS_ERROR =
-  'The connected address is a smart contract (Universal Profile). ' +
-  'To import a profile, your wallet needs to support the up_import method ' +
-  'to provide a controller address. Please use a compatible wallet or ' +
-  'connect with an EOA (externally owned account) instead.';
+// (Error messages are now inline in the functions)
 
 // ============================================================================
 // MAIN FUNCTIONS
@@ -55,14 +47,17 @@ const CONTRACT_ADDRESS_ERROR =
  * Get the controller address for a profile import.
  * 
  * Resolution flow:
- * 1. Try up_import first (preferred method for UP-compatible wallets)
- * 2. If up_import fails, check if connected address is an EOA
- * 3. If connected address is a contract (UP), return an error
+ * 1. Try up_import first (required for UP-compatible wallets)
+ * 2. If up_import fails, return error
+ * 
+ * Note: Any wallet/device can be connected (UP or EOA). The up_import method
+ * should return the controller address that will be authorized. Modern UP
+ * wallets support this method natively.
  * 
  * @param profileAddress - The Universal Profile address to import
  * @param connectedAddress - The currently connected wallet address
  * @param requestUpImport - Function to call up_import on the provider
- * @param isContractAddress - Function to check if an address is a contract
+ * @param isContractAddress - Function to check if an address is a contract (unused, kept for backwards compat)
  * @returns Controller address result with source and potential error
  * 
  * @example
@@ -87,23 +82,17 @@ export async function getControllerAddress(
   requestUpImport: (addr: `0x${string}`) => Promise<UpImportResult>,
   isContractAddress: (addr: `0x${string}`) => Promise<boolean>,
 ): Promise<GetControllerAddressResult> {
-  // Step 1: Try up_import first (preferred method)
+  // Try up_import - this is the only supported method
   const upImportResult = await tryUpImport(profileAddress, requestUpImport);
   if (upImportResult) {
     return upImportResult;
   }
 
-  // Step 2: Verify connected address is not a contract
-  const contractCheckResult = await checkNotContract(connectedAddress, isContractAddress);
-  if (contractCheckResult.error) {
-    return contractCheckResult;
-  }
-
-  // Step 3: Use connected EOA as controller
+  // up_import failed - wallet doesn't support it
   return {
-    controllerAddress: connectedAddress,
-    error: null,
-    source: 'eoa_fallback',
+    controllerAddress: null,
+    error: 'Your wallet does not support the up_import method. Please use a compatible wallet that supports Universal Profile imports.',
+    source: 'error',
   };
 }
 
@@ -163,34 +152,4 @@ async function tryUpImport(
   return null;
 }
 
-/**
- * Check that an address is not a smart contract.
- * @internal
- */
-async function checkNotContract(
-  address: `0x${string}`,
-  isContractAddress: (addr: `0x${string}`) => Promise<boolean>,
-): Promise<GetControllerAddressResult> {
-  try {
-    const isContract = await isContractAddress(address);
-    
-    if (isContract) {
-      return {
-        controllerAddress: null,
-        error: CONTRACT_ADDRESS_ERROR,
-        source: 'error',
-      };
-    }
-  } catch (err) {
-    // If we can't check, assume it's not a contract and proceed.
-    // This is a reasonable fallback for network issues.
-    console.error('[Controller] Error checking if address is contract:', err);
-  }
-
-  // Not a contract (or couldn't check) - allow to proceed
-  return {
-    controllerAddress: address,
-    error: null,
-    source: 'eoa_fallback',
-  };
-}
+// checkNotContract function removed - no longer needed since we only rely on up_import
