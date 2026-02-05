@@ -18,7 +18,7 @@
  * @module contexts/WalletContext
  */
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useChainId, useDisconnect as useWagmiDisconnect, useSendTransaction } from 'wagmi';
 import { useAppKit } from '@reown/appkit/react';
 import { createPublicClient, http, type PublicClient } from 'viem';
@@ -254,6 +254,9 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     chainId: null,
   });
 
+  // Track explicit disconnects to prevent auto-reconnection
+  const manuallyDisconnected = useRef(false);
+
   // ========================================================================
   // INITIALIZATION
   // ========================================================================
@@ -384,11 +387,17 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
 
   useEffect(() => {
     if (wagmiConnected && wagmiAddress && !upState.isConnected) {
+      // Don't auto-reconnect if user explicitly disconnected
+      if (manuallyDisconnected.current) {
+        logger.log('Wagmi auto-reconnected but user manually disconnected — forcing disconnect');
+        wagmiDisconnect();
+        return;
+      }
       logger.log('Wagmi connected:', wagmiAddress);
       setWalletSource('walletconnect');
       setPublicClient(createClientForChain(wagmiChainId));
     }
-  }, [wagmiConnected, wagmiAddress, wagmiChainId, upState.isConnected]);
+  }, [wagmiConnected, wagmiAddress, wagmiChainId, upState.isConnected, wagmiDisconnect]);
 
   // ========================================================================
   // COMPUTED STATE
@@ -412,6 +421,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
    */
   const connect = useCallback(async (source?: 'up-provider' | 'injected' | 'walletconnect') => {
     logger.log('=== CONNECT CALLED ===', { source });
+    manuallyDisconnected.current = false;
     setError(null);
 
     // Auto-detect source if not specified
@@ -575,9 +585,12 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
   const disconnect = useCallback(() => {
     logger.log('=== DISCONNECT ===', { walletSource });
     
-    if (walletSource === 'walletconnect') {
-      wagmiDisconnect();
-    }
+    // Set flag BEFORE wagmi disconnect to prevent auto-reconnect race
+    manuallyDisconnected.current = true;
+    
+    // Always disconnect wagmi to clear persisted localStorage state,
+    // regardless of wallet source (wagmi may auto-detect injected providers)
+    wagmiDisconnect();
     
     setUpState({
       isConnected: false,
