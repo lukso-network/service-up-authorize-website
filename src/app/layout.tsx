@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { WalletProvider } from '@/components/providers/WalletProvider';
+import { AppHeader } from '@/components/shared/AppHeader';
 import './globals.css';
 
 const geistSans = Geist({
@@ -46,40 +46,7 @@ export default function RootLayout({
       >
         <WalletProvider>
           <div className="flex flex-col min-h-screen">
-            {/* Header */}
-            <header className="border-b">
-              <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-                <Link href="/" className="flex items-center gap-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="./logo-square.png"
-                    alt="UP Import Logo"
-                    width={32}
-                    height={32}
-                    className="rounded"
-                  />
-                  <span className="font-bold text-lg">UP Import</span>
-                </Link>
-                <nav className="flex items-center gap-4">
-                  <a
-                    href="https://docs.lukso.tech"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Docs
-                  </a>
-                  <a
-                    href="https://universalprofile.cloud"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    UP Cloud
-                  </a>
-                </nav>
-              </div>
-            </header>
+            <AppHeader />
 
             {/* Main Content */}
             <main className="flex-1">{children}</main>

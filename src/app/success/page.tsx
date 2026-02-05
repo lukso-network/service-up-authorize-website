@@ -3,9 +3,11 @@
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { useWallet } from '@/contexts/WalletContext';
 
 export default function SuccessPage() {
   const router = useRouter();
+  const { disconnect } = useWallet();
 
   return (
     <div className="container mx-auto px-4 py-12 max-w-md">
@@ -58,7 +60,7 @@ export default function SuccessPage() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <Button onClick={() => router.push('/')} className="w-full">
+            <Button onClick={() => { disconnect(); router.push('/'); }} className="w-full">
               Done
             </Button>
             <Button

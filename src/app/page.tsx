@@ -1,11 +1,22 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useWallet } from '@/contexts/WalletContext';
 
 export default function HomePage() {
   const router = useRouter();
+  const { disconnect, isConnected } = useWallet();
+
+  // Always disconnect wallet when landing on home page
+  // This ensures clean state when navigating back from any flow
+  useEffect(() => {
+    if (isConnected) {
+      disconnect();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="container mx-auto px-4 py-12">
