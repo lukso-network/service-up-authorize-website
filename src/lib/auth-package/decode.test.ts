@@ -4,7 +4,6 @@ import { encodeAuthPackage, generateAuthorizationLink, generateCompactCode } fro
 import type { AuthorizationPackage } from '@/types/auth-package';
 
 // IMPORTANT: Controller address MUST be different from profile address
-// This is the core fix - controller comes from up_import, not from profile
 const MOCK_PROFILE_ADDRESS = '0x1234567890123456789012345678901234567890';
 const MOCK_CONTROLLER_ADDRESS = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 
@@ -21,7 +20,7 @@ const mockAuthPackage: AuthorizationPackage = {
   },
 };
 
-describe('decodeAuthPackage', () => {
+describe('decodeAuthPackage (legacy base64 format)', () => {
   it('should decode a valid encoded package', () => {
     const { encoded, checksum } = encodeAuthPackage(mockAuthPackage);
     const decoded = decodeAuthPackage(encoded, checksum);
@@ -47,7 +46,7 @@ describe('decodeAuthPackage', () => {
   it('should return null for missing required fields', () => {
     const incomplete = { version: 1 };
     const encoded = btoa(JSON.stringify(incomplete));
-    const decoded = decodeAuthPackage(encoded, 'abc12345'); // checksum won't match anyway
+    const decoded = decodeAuthPackage(encoded, 'abc12345');
     
     expect(decoded).toBeNull();
   });
@@ -92,13 +91,15 @@ describe('decodeCompactCode', () => {
   });
 });
 
-describe('extractAuthPackageFromURL', () => {
-  it('should extract auth package from valid URL', () => {
+describe('extractAuthPackageFromURL (plain-text format)', () => {
+  it('should extract auth package from plain-text URL params', () => {
     const link = generateAuthorizationLink(mockAuthPackage);
     const extracted = extractAuthPackageFromURL(link);
     
     expect(extracted).not.toBeNull();
-    expect(extracted?.profileAddress).toBe(mockAuthPackage.profileAddress);
+    expect(extracted?.profileAddress).toBe(MOCK_PROFILE_ADDRESS);
+    expect(extracted?.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
+    expect(extracted?.network).toBe('mainnet');
   });
 
   it('should work with URL object', () => {
@@ -107,7 +108,37 @@ describe('extractAuthPackageFromURL', () => {
     const extracted = extractAuthPackageFromURL(url);
     
     expect(extracted).not.toBeNull();
-    expect(extracted?.controllerAddress).toBe(mockAuthPackage.controllerAddress);
+    expect(extracted?.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
+  });
+
+  it('should default to mainnet when network is missing', () => {
+    const url = new URL(`https://example.com/authorize?profile=${MOCK_PROFILE_ADDRESS}&controller=${MOCK_CONTROLLER_ADDRESS}`);
+    const extracted = extractAuthPackageFromURL(url);
+    
+    expect(extracted).not.toBeNull();
+    expect(extracted?.network).toBe('mainnet');
+  });
+
+  it('should handle testnet network', () => {
+    const url = new URL(`https://example.com/authorize?profile=${MOCK_PROFILE_ADDRESS}&controller=${MOCK_CONTROLLER_ADDRESS}&network=testnet`);
+    const extracted = extractAuthPackageFromURL(url);
+    
+    expect(extracted).not.toBeNull();
+    expect(extracted?.network).toBe('testnet');
+  });
+
+  it('should return null for invalid profile address', () => {
+    const url = new URL('https://example.com/authorize?profile=invalid&controller=0xabcdefabcdefabcdefabcdefabcdefabcdefabcd');
+    const extracted = extractAuthPackageFromURL(url);
+    
+    expect(extracted).toBeNull();
+  });
+
+  it('should return null for invalid controller address', () => {
+    const url = new URL(`https://example.com/authorize?profile=${MOCK_PROFILE_ADDRESS}&controller=invalid`);
+    const extracted = extractAuthPackageFromURL(url);
+    
+    expect(extracted).toBeNull();
   });
 
   it('should return null for URL without params', () => {
@@ -116,8 +147,21 @@ describe('extractAuthPackageFromURL', () => {
     
     expect(extracted).toBeNull();
   });
+});
 
-  it('should return null for URL with missing checksum', () => {
+describe('extractAuthPackageFromURL (legacy base64 format)', () => {
+  it('should still support legacy base64 format', () => {
+    // Manually create a legacy URL
+    const { encoded, checksum } = encodeAuthPackage(mockAuthPackage);
+    const url = new URL(`https://example.com/authorize?data=${encoded}&cs=${checksum}`);
+    const extracted = extractAuthPackageFromURL(url);
+    
+    expect(extracted).not.toBeNull();
+    expect(extracted?.profileAddress).toBe(MOCK_PROFILE_ADDRESS);
+    expect(extracted?.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
+  });
+
+  it('should return null for legacy URL with missing checksum', () => {
     const url = new URL('https://example.com/authorize?data=somedata');
     const extracted = extractAuthPackageFromURL(url);
     
@@ -125,43 +169,34 @@ describe('extractAuthPackageFromURL', () => {
   });
 });
 
-describe('encode/decode roundtrip', () => {
-  it('should maintain data integrity through full encode/decode cycle', () => {
-    // Encode
+describe('encode/decode roundtrip (plain-text)', () => {
+  it('should maintain data integrity through encode/decode cycle', () => {
     const link = generateAuthorizationLink(mockAuthPackage);
-    
-    // Decode
     const decoded = extractAuthPackageFromURL(link);
     
     expect(decoded).not.toBeNull();
-    expect(decoded?.version).toBe(mockAuthPackage.version);
     expect(decoded?.profileAddress).toBe(mockAuthPackage.profileAddress);
     expect(decoded?.controllerAddress).toBe(mockAuthPackage.controllerAddress);
-    expect(decoded?.requestedPermissions).toBe(mockAuthPackage.requestedPermissions);
     expect(decoded?.network).toBe(mockAuthPackage.network);
-    expect(decoded?.timestamp).toBe(mockAuthPackage.timestamp);
-    expect(decoded?.targetApp.name).toBe(mockAuthPackage.targetApp.name);
   });
 });
 
 describe('Controller Address Verification in Decoding', () => {
-  it('should decode controller address distinct from profile', () => {
+  it('should decode controller address distinct from profile (legacy)', () => {
     const { encoded, checksum } = encodeAuthPackage(mockAuthPackage);
     const decoded = decodeAuthPackage(encoded, checksum);
     
     expect(decoded).not.toBeNull();
-    // CRITICAL: Controller and profile must be different
     expect(decoded?.controllerAddress).not.toBe(decoded?.profileAddress);
     expect(decoded?.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
     expect(decoded?.profileAddress).toBe(MOCK_PROFILE_ADDRESS);
   });
 
-  it('should extract correct controller from URL (QR code flow)', () => {
+  it('should extract correct controller from plain-text URL', () => {
     const link = generateAuthorizationLink(mockAuthPackage);
     const decoded = extractAuthPackageFromURL(link);
     
     expect(decoded).not.toBeNull();
-    // The controller in the decoded package should be the one that was encoded
     expect(decoded?.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
     expect(decoded?.controllerAddress).not.toBe(MOCK_PROFILE_ADDRESS);
   });
@@ -176,29 +211,13 @@ describe('Controller Address Verification in Decoding', () => {
   });
 
   it('should preserve controller through full authorization flow', () => {
-    // This simulates the complete flow:
-    // 1. Target app calls up_import -> gets controller address
-    // 2. Creates auth package with controller
-    // 3. Generates QR code/link
-    // 4. Source device scans QR -> decodes auth package
-    // 5. Source device authorizes the CONTROLLER (not profile)
-    
-    // Step 1-3: Create and encode
+    // Simulates: create link -> share -> scan -> decode
     const link = generateAuthorizationLink(mockAuthPackage);
-    
-    // Step 4: Decode (simulates scanning QR)
     const decoded = extractAuthPackageFromURL(link);
     
     expect(decoded).not.toBeNull();
-    
-    // Step 5: Verify the controller to authorize is correct
-    // This is the address that will be added as a controller to the profile
     expect(decoded?.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
-    
-    // The profile address is where the authorization happens
     expect(decoded?.profileAddress).toBe(MOCK_PROFILE_ADDRESS);
-    
-    // CRITICAL: These must be different!
     expect(decoded?.controllerAddress).not.toBe(decoded?.profileAddress);
   });
 });

@@ -94,11 +94,41 @@ export function decodeCompactCode(code: string): AuthorizationPackage | null {
 }
 
 /**
- * Extract auth package from URL search params
+ * Extract auth package from URL search params.
+ * Supports both the new plain-text format (?profile=...&controller=...&network=...)
+ * and the legacy base64 format (?data=...&cs=...) for backward compatibility.
  */
 export function extractAuthPackageFromURL(url: URL | string): AuthorizationPackage | null {
   const urlObj = typeof url === 'string' ? new URL(url) : url;
   
+  // New plain-text format: ?profile=0x...&controller=0x...&network=mainnet
+  const profile = urlObj.searchParams.get('profile');
+  const controller = urlObj.searchParams.get('controller');
+  const network = urlObj.searchParams.get('network');
+  
+  if (profile && controller) {
+    if (!isValidAddress(profile) || !isValidAddress(controller)) {
+      console.error('Invalid address format in URL params');
+      return null;
+    }
+    
+    const validNetwork = network === 'testnet' ? 'testnet' : 'mainnet';
+    
+    return {
+      version: 1,
+      profileAddress: profile as `0x${string}`,
+      controllerAddress: controller as `0x${string}`,
+      requestedPermissions: '0x0',
+      network: validNetwork,
+      timestamp: Date.now(),
+      targetApp: {
+        name: 'UP Migration App',
+        url: urlObj.origin,
+      },
+    };
+  }
+  
+  // Legacy base64 format: ?data=...&cs=...
   const encoded = urlObj.searchParams.get('data');
   const checksum = urlObj.searchParams.get('cs');
   

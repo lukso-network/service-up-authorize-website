@@ -6,6 +6,7 @@ import { createPublicClient, http } from 'viem';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { PermissionSelector } from '@/components/migration/PermissionSelector';
@@ -46,12 +47,20 @@ function AuthorizeContent() {
   const [profileMatchError, setProfileMatchError] = useState<string | null>(null);
   const [isValidatingController, setIsValidatingController] = useState(false);
 
-  // Parse auth package from URL (only runs once on mount)
-  useEffect(() => {
-    const data = searchParams.get('data');
-    const checksum = searchParams.get('cs');
+  // Manual controller entry state
+  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [manualControllerAddress, setManualControllerAddress] = useState('');
+  const [isManualEntry, setIsManualEntry] = useState(false);
+  const [manualEntryError, setManualEntryError] = useState<string | null>(null);
 
-    if (data && checksum) {
+  // Parse auth package from URL (only runs once on mount)
+  // Supports both plain-text format (?profile=...&controller=...&network=...)
+  // and legacy base64 format (?data=...&cs=...)
+  useEffect(() => {
+    const hasPlainText = searchParams.get('profile') && searchParams.get('controller');
+    const hasLegacy = searchParams.get('data') && searchParams.get('cs');
+
+    if (hasPlainText || hasLegacy) {
       queueMicrotask(() => {
         try {
           const url = new URL(window.location.href);
@@ -110,20 +119,38 @@ function AuthorizeContent() {
     setIsValidatingController(true);
     setProfileMatchError(null);
 
+    // For manual entry, the profile IS the connected wallet and network comes from wallet
+    if (isManualEntry) {
+      // Update authPackage with connected wallet as profile and network
+      const walletNetwork = network === 'mainnet' || network === 'testnet' ? network : 'mainnet';
+      const needsProfileUpdate = authPackage.profileAddress.toLowerCase() !== address.toLowerCase();
+      const needsNetworkUpdate = authPackage.network !== walletNetwork;
+
+      if (needsProfileUpdate || needsNetworkUpdate) {
+        setAuthPackage({
+          ...authPackage,
+          profileAddress: address as `0x${string}`,
+          network: walletNetwork,
+        });
+      }
+      setIsValidatingController(false);
+      return;
+    }
+
     // Check if connected wallet address matches the profile address
     // Users connect devices that return the profile address directly
     const connectedAddressLower = address.toLowerCase();
     const profileAddressLower = authPackage.profileAddress.toLowerCase();
-    
+
     if (connectedAddressLower !== profileAddressLower) {
       setProfileMatchError(
         `Connected wallet ${shortenAddress(address)} does not match the profile being authorized. ` +
         `Please connect the Universal Profile ${shortenAddress(authPackage.profileAddress)} directly.`
       );
     }
-    
+
     setIsValidatingController(false);
-  }, [isConnected, address, authPackage]);
+  }, [isConnected, address, authPackage, isManualEntry, network]);
 
   const handleAuthorize = async () => {
     if (!authPackage || !address) {
@@ -180,6 +207,41 @@ function AuthorizeContent() {
     setTxHash(null);
   };
 
+  const handleManualControllerSubmit = () => {
+    setManualEntryError(null);
+
+    // Validate address format
+    const trimmedAddress = manualControllerAddress.trim();
+    if (!trimmedAddress) {
+      setManualEntryError('Please enter a controller address');
+      return;
+    }
+
+    // Check if it's a valid Ethereum address format
+    if (!/^0x[a-fA-F0-9]{40}$/.test(trimmedAddress)) {
+      setManualEntryError('Invalid address format. Must be a 42-character hex address starting with 0x');
+      return;
+    }
+
+    // Create auth package with manual controller
+    // Profile address will be set when wallet connects (in the validation useEffect)
+    const manualAuthPackage: AuthorizationPackage = {
+      version: 1,
+      profileAddress: '0x0000000000000000000000000000000000000000' as `0x${string}`, // Placeholder, will be set from connected wallet
+      controllerAddress: trimmedAddress as `0x${string}`,
+      requestedPermissions: PERMISSION_PRESETS.STANDARD_WALLET.toString(16),
+      targetApp: {
+        name: 'Manual Authorization',
+      },
+      network: 'mainnet', // Default to mainnet
+      timestamp: Date.now(),
+    };
+
+    setAuthPackage(manualAuthPackage);
+    setIsManualEntry(true);
+    setShowManualEntry(false);
+  };
+
   const explorerUrl = authPackage 
     ? getEndpoints(authPackage.network).explorer 
     : undefined;
@@ -192,8 +254,8 @@ function AuthorizeContent() {
 
   const activePermissions = getActivePermissions(permissions);
 
-  // No auth package in URL - show guidance
-  if (!searchParams.has('data') && !parseError) {
+  // No auth package in URL - show guidance (unless manual entry is in progress)
+  if (!searchParams.has('data') && !searchParams.has('profile') && !parseError && !authPackage) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-md">
         <Card>
@@ -211,6 +273,56 @@ function AuthorizeContent() {
             <Button variant="outline" onClick={() => router.push('/')} className="w-full">
               Go to Home
             </Button>
+
+            <Separator className="my-4" />
+
+            {!showManualEntry ? (
+              <button
+                type="button"
+                onClick={() => setShowManualEntry(true)}
+                className="w-full text-sm text-primary hover:underline cursor-pointer"
+              >
+                Or enter controller key manually
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <label className="text-sm font-medium">Controller Address</label>
+                <Input
+                  type="text"
+                  placeholder="0x..."
+                  value={manualControllerAddress}
+                  onChange={(e) => {
+                    setManualControllerAddress(e.target.value);
+                    setManualEntryError(null);
+                  }}
+                  className="font-mono text-sm"
+                />
+                {manualEntryError && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{manualEntryError}</AlertDescription>
+                  </Alert>
+                )}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowManualEntry(false);
+                      setManualControllerAddress('');
+                      setManualEntryError(null);
+                    }}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleManualControllerSubmit}
+                    className="flex-1"
+                  >
+                    Continue
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

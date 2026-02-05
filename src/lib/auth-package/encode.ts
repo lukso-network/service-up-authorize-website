@@ -59,22 +59,22 @@ export function encodeAuthPackage(authPackage: AuthorizationPackage): EncodedAut
 
 /**
  * Generate a deep link URL for the authorization page.
- * Creates a full URL that can be shared via QR code or link.
+ * Creates a full URL with plain-text profile and controller addresses.
  * 
  * @param authPackage - The authorization package to encode
- * @returns Full URL to the /authorize page with encoded data
+ * @returns Full URL to the /authorize page with plain-text parameters
  * 
  * @example
  * ```ts
  * const link = generateAuthorizationLink(authPackage);
- * // Returns: https://example.com/authorize?data=...&cs=...
+ * // Returns: https://example.com/authorize?profile=0x123...&controller=0xabc...&network=mainnet
  * ```
  */
 export function generateAuthorizationLink(authPackage: AuthorizationPackage): string {
-  const { encoded, checksum } = encodeAuthPackage(authPackage);
   const url = new URL('/authorize', APP_BASE_URL);
-  url.searchParams.set('data', encoded);
-  url.searchParams.set('cs', checksum);
+  url.searchParams.set('profile', authPackage.profileAddress);
+  url.searchParams.set('controller', authPackage.controllerAddress);
+  url.searchParams.set('network', authPackage.network);
   return url.toString();
 }
 

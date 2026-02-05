@@ -54,30 +54,42 @@ describe('encodeAuthPackage', () => {
 
 describe('generateAuthorizationLink', () => {
   beforeEach(() => {
-    // Mock process.env for APP_BASE_URL
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://migrate.universaleverything.io');
   });
 
-  it('should generate valid URL with data and checksum', () => {
+  it('should generate URL with plain-text profile and controller params', () => {
     const link = generateAuthorizationLink(mockAuthPackage);
     const url = new URL(link);
     
     expect(url.pathname).toBe('/authorize');
-    expect(url.searchParams.has('data')).toBe(true);
-    expect(url.searchParams.has('cs')).toBe(true);
+    expect(url.searchParams.get('profile')).toBe(MOCK_PROFILE_ADDRESS);
+    expect(url.searchParams.get('controller')).toBe(MOCK_CONTROLLER_ADDRESS);
+    expect(url.searchParams.get('network')).toBe('mainnet');
   });
 
-  it('should include encoded auth package in URL', () => {
+  it('should not contain base64 data or checksum params', () => {
     const link = generateAuthorizationLink(mockAuthPackage);
     const url = new URL(link);
     
-    const data = url.searchParams.get('data');
-    expect(data).toBeTruthy();
+    expect(url.searchParams.has('data')).toBe(false);
+    expect(url.searchParams.has('cs')).toBe(false);
+  });
+
+  it('should include plain-text addresses in the URL', () => {
+    const link = generateAuthorizationLink(mockAuthPackage);
     
-    // Verify it's valid base64 that decodes to our auth package
-    const decoded = JSON.parse(atob(data!));
-    expect(decoded.profileAddress).toBe(mockAuthPackage.profileAddress);
-    expect(decoded.controllerAddress).toBe(mockAuthPackage.controllerAddress);
+    // Addresses should appear directly in the URL (not encoded)
+    expect(link).toContain(MOCK_PROFILE_ADDRESS);
+    expect(link).toContain(MOCK_CONTROLLER_ADDRESS);
+    expect(link).toContain('network=mainnet');
+  });
+
+  it('should correctly encode testnet network', () => {
+    const testnetPackage = { ...mockAuthPackage, network: 'testnet' as const };
+    const link = generateAuthorizationLink(testnetPackage);
+    const url = new URL(link);
+    
+    expect(url.searchParams.get('network')).toBe('testnet');
   });
 });
 
@@ -94,7 +106,6 @@ describe('generateCompactCode', () => {
     const code = generateCompactCode(mockAuthPackage);
     const decoded = JSON.parse(atob(code));
     
-    // Should use compact keys
     expect(decoded.v).toBe(mockAuthPackage.version);
     expect(decoded.p).toBe(mockAuthPackage.profileAddress);
     expect(decoded.c).toBe(mockAuthPackage.controllerAddress);
@@ -111,42 +122,26 @@ describe('generateCompactCode', () => {
 });
 
 describe('Controller Address Verification in Encoding', () => {
-  it('should preserve distinct controller and profile addresses', () => {
-    // CRITICAL: These must be different addresses
+  it('should preserve distinct controller and profile addresses in link', () => {
     expect(mockAuthPackage.controllerAddress).not.toBe(mockAuthPackage.profileAddress);
     
-    const { encoded } = encodeAuthPackage(mockAuthPackage);
-    const decoded = JSON.parse(atob(encoded));
-    
-    // Verify after encoding they're still distinct
-    expect(decoded.controllerAddress).not.toBe(decoded.profileAddress);
-    expect(decoded.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
-    expect(decoded.profileAddress).toBe(MOCK_PROFILE_ADDRESS);
-  });
-
-  it('should include controller address in authorization link', () => {
     const link = generateAuthorizationLink(mockAuthPackage);
     const url = new URL(link);
-    const data = url.searchParams.get('data');
-    const decoded = JSON.parse(atob(data!));
     
-    // The link should contain the controller address (for the QR code)
-    expect(decoded.controllerAddress).toBe(MOCK_CONTROLLER_ADDRESS);
-    expect(decoded.controllerAddress).not.toBe(MOCK_PROFILE_ADDRESS);
+    expect(url.searchParams.get('controller')).not.toBe(url.searchParams.get('profile'));
+    expect(url.searchParams.get('controller')).toBe(MOCK_CONTROLLER_ADDRESS);
+    expect(url.searchParams.get('profile')).toBe(MOCK_PROFILE_ADDRESS);
   });
 
   it('should include controller address in compact code (for QR)', () => {
     const code = generateCompactCode(mockAuthPackage);
     const decoded = JSON.parse(atob(code));
     
-    // 'c' is the compact key for controllerAddress
     expect(decoded.c).toBe(MOCK_CONTROLLER_ADDRESS);
     expect(decoded.c).not.toBe(MOCK_PROFILE_ADDRESS);
   });
 
   it('should not allow profile address as controller in test data', () => {
-    // This is a meta-test to ensure our test fixtures are correct
-    // If this fails, our tests are testing the wrong thing!
     expect(MOCK_CONTROLLER_ADDRESS.toLowerCase()).not.toBe(MOCK_PROFILE_ADDRESS.toLowerCase());
   });
 });
