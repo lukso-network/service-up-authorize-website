@@ -615,6 +615,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     value?: bigint;
   }): Promise<`0x${string}` | null> => {
     if (!isConnected || !address) {
+      logger.error('sendTransaction called but wallet not connected', { isConnected, address });
       setError('Not connected');
       return null;
     }
@@ -648,7 +649,9 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       }
 
       // Fall back to Wagmi for WalletConnect
+      // Must pass chainId explicitly — wagmi defaults to chain 1 (Ethereum) otherwise
       const hash = await sendTransactionAsync({
+        chainId: chainId ?? 42,
         to: params.to,
         data: params.data,
         value: params.value,
@@ -659,7 +662,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       setError(err instanceof Error ? err.message : 'Transaction failed');
       return null;
     }
-  }, [isConnected, address, walletSource, upProvider, sendTransactionAsync]);
+  }, [isConnected, address, walletSource, upProvider, sendTransactionAsync, chainId]);
 
   /**
    * Open the WalletConnect modal.
@@ -668,6 +671,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
     try {
       await openAppKit();
     } catch (err) {
+      logger.error('Failed to open WalletConnect modal:', err);
       setError(err instanceof Error ? err.message : 'Failed to open WalletConnect');
     }
   }, [openAppKit]);
