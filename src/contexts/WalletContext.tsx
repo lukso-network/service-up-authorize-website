@@ -224,7 +224,7 @@ interface WalletContextProviderProps {
 
 export function WalletContextProvider({ children }: WalletContextProviderProps) {
   // Wagmi/Reown state
-  const { address: wagmiAddress, isConnected: wagmiConnected, isConnecting: wagmiConnecting } = useAccount();
+  const { address: wagmiAddress, isConnected: wagmiConnected, isConnecting: wagmiConnecting, chainId: wagmiAccountChainId } = useAccount();
   const wagmiChainId = useChainId();
   const { disconnect: wagmiDisconnect } = useWagmiDisconnect();
   const { open: openAppKit } = useAppKit();
@@ -651,9 +651,11 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
 
       // Fall back to Wagmi for WalletConnect
       // Switch wallet to LUKSO chain if not already on it
+      // Use wagmiAccountChainId (actual wallet chain) not wagmiChainId (config default)
       const targetChainId = chainId ?? 42;
-      if (wagmiChainId !== targetChainId) {
-        logger.log('Switching wallet chain from', wagmiChainId, 'to', targetChainId);
+      const actualWalletChain = wagmiAccountChainId ?? wagmiChainId;
+      if (actualWalletChain !== targetChainId) {
+        logger.log('Switching wallet chain from', actualWalletChain, 'to', targetChainId);
         await switchChainAsync({ chainId: targetChainId });
       }
       const hash = await sendTransactionAsync({
@@ -668,7 +670,7 @@ export function WalletContextProvider({ children }: WalletContextProviderProps) 
       setError(err instanceof Error ? err.message : 'Transaction failed');
       return null;
     }
-  }, [isConnected, address, walletSource, upProvider, sendTransactionAsync, chainId, wagmiChainId, switchChainAsync]);
+  }, [isConnected, address, walletSource, upProvider, sendTransactionAsync, chainId, wagmiAccountChainId, wagmiChainId, switchChainAsync]);
 
   /**
    * Open the WalletConnect modal.
