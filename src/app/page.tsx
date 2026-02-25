@@ -52,7 +52,7 @@ export default function HomePage() {
                 />
               </svg>
             </div>
-            <CardTitle>I have a new app/wallet</CardTitle>
+            <CardTitle>I have a new Universal Profile app or browser extension</CardTitle>
             <CardDescription>
               Set up your new app to request access to your existing Universal Profile
             </CardDescription>
