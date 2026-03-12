@@ -1,18 +1,11 @@
 'use client';
 
-import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ProfileMicroHeader } from '@/components/shared/ProfileIdentityCard';
 import { useWallet } from '@/contexts/WalletContext';
 import { shortenAddress } from '@/lib/utils/format';
-
-// Debug logging
-const DEBUG_PREFIX = '[WalletConnector]';
-function debugLog(message: string, ...args: unknown[]) {
-  console.log(`${DEBUG_PREFIX} ${message}`, ...args);
-}
 
 interface WalletConnectorProps {
   className?: string;
@@ -22,12 +15,9 @@ interface WalletConnectorProps {
 }
 
 /**
- * Unified wallet connection component that handles:
- * 1. UP Provider (for Universal Everything mini-app context)
- * 2. Injected provider (UP Browser Extension, MetaMask)
- * 3. WalletConnect/Reown (fallback)
- * 
- * Automatically hides WalletConnect when UP Provider is available.
+ * Unified wallet connection component.
+ * Uses @lukso/up-modal for connection UI (UP Extension, UP Mobile, EOA wallets).
+ * In mini-app context, connects via UP Provider instead.
  */
 export function WalletConnector({
   className,
@@ -43,31 +33,11 @@ export function WalletConnector({
     error,
     walletSource,
     isInMiniAppContext,
-    hasInjectedProvider,
-    shouldShowWalletConnect,
     connect,
     disconnect,
-    openWalletConnect,
-    isProviderReady,
   } = useWallet();
 
-  // Log state on render
-  useEffect(() => {
-    debugLog('State:', {
-      isConnected,
-      isConnecting,
-      address,
-      network,
-      error,
-      walletSource,
-      isInMiniAppContext,
-      hasInjectedProvider,
-      shouldShowWalletConnect,
-      isProviderReady,
-    });
-  }, [isConnected, isConnecting, address, network, error, walletSource, isInMiniAppContext, hasInjectedProvider, shouldShowWalletConnect, isProviderReady]);
-
-  // If connected, show connected state
+  // Connected state
   if (isConnected && address) {
     return (
       <div className={`flex items-center gap-2 ${className || ''}`}>
@@ -89,7 +59,7 @@ export function WalletConnector({
     );
   }
 
-  // If connecting, show loading state
+  // Connecting state
   if (isConnecting) {
     return (
       <Button disabled className={className} size={size}>
@@ -99,48 +69,26 @@ export function WalletConnector({
     );
   }
 
-  // Handle connect click
-  const handleConnect = () => {
-    debugLog('Connect button clicked', { isInMiniAppContext, hasInjectedProvider });
-    connect();
-  };
-
-  const handleWalletConnect = () => {
-    debugLog('WalletConnect button clicked');
-    openWalletConnect();
-  };
-
-  // Not connected - show connection options
+  // Not connected
   return (
     <div className={`flex flex-col gap-2 ${className || ''}`}>
-      <div className="flex items-center gap-2">
-        {/* Primary connect button */}
-        <Button onClick={handleConnect} size={size} variant={variant}>
-          <svg
-            className="w-5 h-5 mr-2"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M13 10V3L4 14h7v7l9-11h-7z"
-            />
-          </svg>
-          {isInMiniAppContext ? 'Connect via UP' : hasInjectedProvider ? 'Connect Extension' : 'Connect Wallet'}
-        </Button>
+      <Button onClick={() => connect()} size={size} variant={variant}>
+        <svg
+          className="w-5 h-5 mr-2"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M13 10V3L4 14h7v7l9-11h-7z"
+          />
+        </svg>
+        {isInMiniAppContext ? 'Connect via UP' : 'Connect Wallet'}
+      </Button>
 
-        {/* Show WalletConnect button only when appropriate */}
-        {shouldShowWalletConnect && hasInjectedProvider && (
-          <Button variant="outline" size={size} onClick={handleWalletConnect}>
-            WalletConnect
-          </Button>
-        )}
-      </div>
-
-      {/* Show helper text in mini-app context */}
       {isInMiniAppContext && (
         <p className="text-xs text-muted-foreground">
           Connect through Universal Everything to continue
@@ -157,8 +105,8 @@ export function WalletConnector({
 }
 
 /**
- * Compact version for headers/nav
- * Shows profile picture + name/address when connected
+ * Compact version for headers/nav.
+ * Shows profile picture + name/address when connected.
  */
 export function WalletConnectorCompact({ className }: { className?: string }) {
   const {
@@ -182,14 +130,14 @@ export function WalletConnectorCompact({ className }: { className?: string }) {
 
   if (isConnected && address) {
     return (
-      <Button 
-        variant="outline" 
-        size="sm" 
-        onClick={disconnect} 
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={disconnect}
         className={`h-auto py-1.5 px-3 ${className}`}
       >
-        <ProfileMicroHeader 
-          address={address} 
+        <ProfileMicroHeader
+          address={address}
           network={network}
         />
         {walletSource === 'up-provider' && (

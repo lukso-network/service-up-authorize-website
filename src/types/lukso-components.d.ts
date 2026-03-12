@@ -1,11 +1,11 @@
-// Type definitions for LUKSO web components in React
+// Type definitions for LUKSO web components in React 19
 // Note: Do NOT import @lukso/web-components here as it causes build issues
 // The actual import happens client-side only in LuksoProfileAvatar.tsx
 
 type ProfileSize = '2x-small' | 'x-small' | 'small' | 'medium' | 'large' | 'x-large' | '2x-large';
 
-// Extend JSX IntrinsicElements for LUKSO web components
-declare global {
+// React 19 uses React.JSX namespace for IntrinsicElements
+declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
       'lukso-profile': React.DetailedHTMLProps<
@@ -50,6 +50,11 @@ declare global {
           src?: string;
           placeholder?: string;
         },
+        HTMLElement
+      >;
+      // up-modal connect dialog web component
+      'connect-modal': React.DetailedHTMLProps<
+        React.HTMLAttributes<HTMLElement>,
         HTMLElement
       >;
     }
