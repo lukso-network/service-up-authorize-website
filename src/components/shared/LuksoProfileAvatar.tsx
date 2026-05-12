@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 // Types are in src/types/lukso-components.d.ts (loaded automatically by TS)
 
@@ -51,6 +51,10 @@ const skeletonSizeClasses: Record<string, string> = {
   '2xl': 'h-24 w-24',
 };
 
+function subscribeToClientSnapshot() {
+  return () => undefined;
+}
+
 /**
  * LUKSO Profile Avatar Component
  * 
@@ -73,12 +77,12 @@ export function LuksoProfileAvatar({
   showLoadingState = true,
   className = '',
 }: LuksoProfileAvatarProps) {
-  // Track if component is mounted (for SSR)
-  const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
+  // Avoid rendering the web component during SSR while satisfying react-hooks lint.
+  const isMounted = useSyncExternalStore(
+    subscribeToClientSnapshot,
+    () => true,
+    () => false
+  );
 
   const luksoSize = sizeMap[size] || 'small';
   const skeletonClass = skeletonSizeClasses[size] || 'h-10 w-10';
@@ -98,6 +102,7 @@ export function LuksoProfileAvatar({
       has-identicon={showIdenticon}
       size={luksoSize}
       className={className}
+      aria-label={name ? `${name} profile avatar` : `Profile avatar for ${address}`}
     />
   );
 }

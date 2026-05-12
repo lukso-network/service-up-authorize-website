@@ -82,6 +82,10 @@ export async function getControllerAddress(
   requestUpImport: (addr: `0x${string}`) => Promise<UpImportResult>,
   isContractAddress: (addr: `0x${string}`) => Promise<boolean>,
 ): Promise<GetControllerAddressResult> {
+  // Kept for backwards-compatible call signatures.
+  void connectedAddress;
+  void isContractAddress;
+
   // Try up_import - this is the only supported method
   const upImportResult = await tryUpImport(profileAddress, requestUpImport);
   if (upImportResult) {

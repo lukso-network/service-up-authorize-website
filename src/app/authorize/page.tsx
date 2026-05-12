@@ -30,7 +30,7 @@ import { shortenAddress } from '@/lib/utils/format';
 import { lukso, luksoTestnet } from '@/lib/utils/chains';
 import { getEndpoints } from '@/constants/endpoints';
 import { PERMISSION_PRESETS, getActivePermissions, PERMISSION_LABELS, PERMISSIONS, hasPermission } from '@/constants/permissions';
-import { buildSetDataTransaction } from '@/lib/lsp6/transaction';
+import { buildRemoveControllerTransaction, buildSetDataTransaction } from '@/lib/lsp6/transaction';
 import {
   encodeAllowedCalls,
   encodeAllowedDataKeys,
@@ -47,7 +47,6 @@ function AuthorizeContent() {
   const {
     address,
     isConnected,
-    isConnecting,
     network,
     error: walletError,
     walletSource,
@@ -62,9 +61,11 @@ function AuthorizeContent() {
   const [status, setStatus] = useState<'idle' | 'authorizing' | 'confirming' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
-  const [isConfirming, setIsConfirming] = useState(false);
   const [profileMatchError, setProfileMatchError] = useState<string | null>(null);
   const [isValidatingController, setIsValidatingController] = useState(false);
+  const [transactionAction, setTransactionAction] = useState<'authorize' | 'remove'>('authorize');
+  const [removeConfirmStep, setRemoveConfirmStep] = useState<0 | 1 | 2>(0);
+  const [removeConfirmationText, setRemoveConfirmationText] = useState('');
 
   // Manual controller entry state
   const [showManualEntry, setShowManualEntry] = useState(false);
@@ -267,12 +268,18 @@ function AuthorizeContent() {
     setIsValidatingController(false);
   }, [isConnected, address, authPackage, isManualEntry, network]);
 
+  const closeRemoveConfirmation = () => {
+    setRemoveConfirmStep(0);
+    setRemoveConfirmationText('');
+  };
+
   const handleAuthorize = async () => {
     if (!authPackage || !address) {
       setError('Missing authorization data or wallet connection');
       return;
     }
 
+    setTransactionAction('authorize');
     setStatus('authorizing');
     setError(null);
 
@@ -324,6 +331,49 @@ function AuthorizeContent() {
     } catch (err) {
       console.error('Error authorizing:', err);
       setError(err instanceof Error ? err.message : 'Failed to authorize controller');
+      setStatus('error');
+    }
+  };
+
+  const handleRemoveController = async () => {
+    if (!authPackage || !address) {
+      setError('Missing authorization data or wallet connection');
+      return;
+    }
+
+    closeRemoveConfirmation();
+    setTransactionAction('remove');
+    setStatus('authorizing');
+    setError(null);
+
+    try {
+      const chain = authPackage.network === 'mainnet' ? lukso : luksoTestnet;
+      const publicClient = createPublicClient({
+        chain,
+        transport: http(),
+      });
+
+      const { calldata } = await buildRemoveControllerTransaction(
+        publicClient,
+        authPackage.profileAddress,
+        authPackage.controllerAddress
+      );
+
+      const hash = await sendTransaction({
+        to: authPackage.profileAddress,
+        data: calldata,
+      });
+
+      if (hash) {
+        setTxHash(hash);
+        setStatus('confirming');
+      } else {
+        setStatus('error');
+        setError('Removal transaction was rejected or failed');
+      }
+    } catch (err) {
+      console.error('Error removing controller key:', err);
+      setError(err instanceof Error ? err.message : 'Failed to remove controller key');
       setStatus('error');
     }
   };
@@ -501,11 +551,19 @@ function AuthorizeContent() {
         <Card>
           <CardContent className="pt-6 text-center space-y-4">
             <p className="text-sm text-muted-foreground">
-              The new controller has been successfully authorized!
+              {transactionAction === 'remove'
+                ? 'The controller key has been removed. Its permissions and AddressPermissions[] entry were cleared.'
+                : 'The new controller has been successfully authorized!'}
             </p>
-            <Button onClick={() => router.push('/success')}>
-              Continue
-            </Button>
+            {transactionAction === 'remove' ? (
+              <Button onClick={() => { disconnect(); router.push('/'); }}>
+                Done
+              </Button>
+            ) : (
+              <Button onClick={() => router.push('/success')}>
+                Continue
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -795,6 +853,37 @@ function AuthorizeContent() {
             </CardFooter>
           </Card>
 
+          {/* Destructive controller removal */}
+          <Card className="border-destructive/40">
+            <CardHeader>
+              <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
+              <CardDescription>
+                Remove this controller key completely instead of changing its permissions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert variant="destructive">
+                <AlertDescription>
+                  This clears all permission data for {shortenAddress(authPackage.controllerAddress)}
+                  and empties its existing AddressPermissions[] slot. The array is not compacted,
+                  reindexed, or shortened.
+                </AlertDescription>
+              </Alert>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setError(null);
+                  setRemoveConfirmationText('');
+                  setRemoveConfirmStep(1);
+                }}
+                disabled={status === 'authorizing' || !!profileMatchError || isValidatingController}
+                className="w-full"
+              >
+                Remove Controller Key
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* SUPER Permission Confirmation Dialog */}
           <Dialog
             open={superConfirmDialog.open}
@@ -827,6 +916,92 @@ function AuthorizeContent() {
                   onClick={confirmSuperPermission}
                 >
                   Enable &amp; Clear Entries
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Controller Removal Confirmation 1 */}
+          <Dialog
+            open={removeConfirmStep === 1}
+            onOpenChange={(open) => {
+              if (!open) {
+                closeRemoveConfirmation();
+              }
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Remove controller key?</DialogTitle>
+                <DialogDescription>
+                  This will permanently remove controller {shortenAddress(authPackage.controllerAddress)}
+                  from profile {shortenAddress(authPackage.profileAddress)}.
+                </DialogDescription>
+              </DialogHeader>
+              <Alert variant="destructive">
+                <AlertDescription>
+                  The transaction will clear the controller&apos;s permissions, AllowedCalls,
+                  AllowedERC725YDataKeys, and its current AddressPermissions[] entry. Continue only
+                  if you intend to revoke this controller completely.
+                </AlertDescription>
+              </Alert>
+              <DialogFooter>
+                <Button variant="outline" onClick={closeRemoveConfirmation}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => setRemoveConfirmStep(2)}
+                >
+                  I Understand, Continue
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Controller Removal Confirmation 2 */}
+          <Dialog
+            open={removeConfirmStep === 2}
+            onOpenChange={(open) => {
+              if (!open) {
+                closeRemoveConfirmation();
+              }
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Final confirmation</DialogTitle>
+                <DialogDescription>
+                  This action removes access for {shortenAddress(authPackage.controllerAddress)}.
+                  It cannot be undone except by authorizing the controller again.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-2">
+                <label htmlFor="remove-confirmation" className="text-sm font-medium">
+                  Type REMOVE to confirm
+                </label>
+                <Input
+                  id="remove-confirmation"
+                  value={removeConfirmationText}
+                  onChange={(event) => setRemoveConfirmationText(event.target.value)}
+                  autoComplete="off"
+                  disabled={status === 'authorizing'}
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={closeRemoveConfirmation}
+                  disabled={status === 'authorizing'}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleRemoveController}
+                  disabled={removeConfirmationText.trim() !== 'REMOVE' || status === 'authorizing'}
+                >
+                  Remove Controller Key
                 </Button>
               </DialogFooter>
             </DialogContent>

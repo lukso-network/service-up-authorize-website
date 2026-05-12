@@ -49,7 +49,7 @@ describe('INTERFACE_PRESETS', () => {
   });
 
   it('each preset has name and 4-byte hex id', () => {
-    for (const [key, preset] of Object.entries(INTERFACE_PRESETS)) {
+    for (const preset of Object.values(INTERFACE_PRESETS)) {
       expect(preset.name).toBeTruthy();
       expect(preset.id).toMatch(/^0x[a-fA-F0-9]{8}$/);
     }
@@ -117,7 +117,7 @@ describe('DATA_KEY_PRESETS', () => {
   });
 
   it('all presets have required fields', () => {
-    for (const [key, preset] of Object.entries(DATA_KEY_PRESETS)) {
+    for (const preset of Object.values(DATA_KEY_PRESETS)) {
       expect(preset.name).toBeTruthy();
       expect(preset.key).toBeTruthy();
       expect(preset.description).toBeTruthy();

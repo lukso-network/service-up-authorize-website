@@ -449,11 +449,6 @@ describe('Full User Flow - Provider Consistency', () => {
       }),
     };
     
-    const mockWagmi = vi.fn().mockImplementation(() => {
-      steps.push('WAGMI_CALLED');
-      return Promise.resolve('0xTxHash');
-    });
-    
     // User flow:
     // 1. Connect via WalletConnect
     steps.push('USER_CONNECTS_WALLETCONNECT');
@@ -514,11 +509,6 @@ describe('Full User Flow - Provider Consistency', () => {
         return null;
       }),
     };
-    
-    const mockWagmi = vi.fn().mockImplementation(() => {
-      steps.push('WAGMI_CALLED');
-      return Promise.resolve('0xTxHash');
-    });
     
     // User flow:
     steps.push('USER_CONNECTS_EXTENSION');

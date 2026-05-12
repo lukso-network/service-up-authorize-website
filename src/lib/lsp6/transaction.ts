@@ -9,6 +9,8 @@ import {
 import { permissionsToHex } from '@/constants/permissions';
 import type { AuthorizationPackage } from '@/types/auth-package';
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
 // ABI for setDataBatch and getData
 const UP_ABI = [
   {
@@ -29,6 +31,19 @@ const UP_ABI = [
     type: 'function',
   },
 ] as const;
+
+function normalizeAddressData(data: unknown): string | null {
+  if (typeof data !== 'string' || !data.startsWith('0x') || data === '0x') {
+    return null;
+  }
+
+  const hex = data.slice(2).toLowerCase();
+  if (hex.length < 40 || !/^[0-9a-f]+$/.test(hex)) {
+    return null;
+  }
+
+  return `0x${hex.slice(-40)}`;
+}
 
 /**
  * Get the current controller array length from the UP
@@ -109,8 +124,6 @@ export async function findEmptySlot(
   if (arrayLength === 0n) return null;
 
   try {
-    const emptyAddress = '0x0000000000000000000000000000000000000000';
-
     // Read all array elements to find empty slots
     for (let i = 0n; i < arrayLength; i++) {
       const indexKey = buildAddressPermissionsIndexKey(i);
@@ -122,11 +135,8 @@ export async function findEmptySlot(
       });
 
       // Check if this slot is empty (0x or 0x0000...0000)
-      if (
-        !addressData ||
-        addressData === '0x' ||
-        addressData.toLowerCase() === `0x${emptyAddress.toLowerCase().slice(2).padStart(40, '0')}`
-      ) {
+      const addressInSlot = normalizeAddressData(addressData);
+      if (!addressData || addressData === '0x' || addressInSlot === ZERO_ADDRESS) {
         return i;
       }
     }
@@ -138,7 +148,50 @@ export async function findEmptySlot(
   }
 }
 
+/**
+ * Find a controller address in AddressPermissions[] without compacting the array.
+ */
+export async function findControllerArrayIndex(
+  client: PublicClient,
+  upAddress: `0x${string}`,
+  controllerAddress: `0x${string}`,
+  arrayLength?: bigint
+): Promise<bigint | null> {
+  const length = arrayLength ?? await getControllerArrayLength(client, upAddress);
+  if (length === 0n) return null;
+
+  try {
+    const targetAddress = controllerAddress.toLowerCase();
+
+    for (let i = 0n; i < length; i++) {
+      const indexKey = buildAddressPermissionsIndexKey(i);
+      const addressData = await client.readContract({
+        address: upAddress,
+        abi: UP_ABI,
+        functionName: 'getData',
+        args: [indexKey],
+      });
+
+      if (normalizeAddressData(addressData) === targetAddress) {
+        return i;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error finding controller array index:', error);
+    return null;
+  }
+}
+
 export interface AddControllerTransactionData {
+  keys: `0x${string}`[];
+  values: `0x${string}`[];
+  calldata: `0x${string}`;
+}
+
+export interface RemoveControllerTransactionData {
+  controllerIndex: bigint;
   keys: `0x${string}`[];
   values: `0x${string}`[];
   calldata: `0x${string}`;
@@ -276,6 +329,47 @@ export async function buildSetDataTransaction(
     functionName: 'setDataBatch',
     args: [keys, values],
   });
+}
+
+/**
+ * Build the transaction data for removing a controller key completely.
+ *
+ * This clears the controller's LSP6 permission/restriction keys and clears the
+ * existing AddressPermissions[index] entry. The AddressPermissions[] length is
+ * intentionally left unchanged so indexes are not compacted or reshuffled.
+ */
+export async function buildRemoveControllerTransaction(
+  client: PublicClient,
+  upAddress: `0x${string}`,
+  controllerAddress: `0x${string}`
+): Promise<RemoveControllerTransactionData> {
+  const currentLength = await getControllerArrayLength(client, upAddress);
+  const controllerIndex = await findControllerArrayIndex(
+    client,
+    upAddress,
+    controllerAddress,
+    currentLength
+  );
+
+  if (controllerIndex === null) {
+    throw new Error('Controller address was not found in AddressPermissions[]');
+  }
+
+  const keys: `0x${string}`[] = [
+    buildPermissionsKey(controllerAddress),
+    buildAllowedCallsKey(controllerAddress),
+    buildAllowedDataKeysKey(controllerAddress),
+    buildAddressPermissionsIndexKey(controllerIndex),
+  ];
+  const values: `0x${string}`[] = ['0x', '0x', '0x', '0x'];
+
+  const calldata = encodeFunctionData({
+    abi: UP_ABI,
+    functionName: 'setDataBatch',
+    args: [keys, values],
+  });
+
+  return { controllerIndex, keys, values, calldata };
 }
 
 /**

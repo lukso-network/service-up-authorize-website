@@ -10,7 +10,7 @@
  * @module contexts/WalletContext
  */
 
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { useAccount, useChainId, useDisconnect as useWagmiDisconnect, useSendTransaction, useSwitchChain } from 'wagmi';
 import { createPublicClient, http, type PublicClient } from 'viem';
 import { lukso, luksoTestnet } from '@/lib/utils/chains';
@@ -94,6 +94,49 @@ function createClientForChain(chainId: number): PublicClient {
   return createPublicClient({ chain, transport: http() });
 }
 
+function subscribeToClientSnapshot() {
+  return () => undefined;
+}
+
+function getClientMountedSnapshot() {
+  return true;
+}
+
+function getServerMountedSnapshot() {
+  return false;
+}
+
+function getClientMiniAppSnapshot() {
+  return isInIframe();
+}
+
+async function tryUpImport(
+  provider: EIP1193Provider,
+  profileAddress: `0x${string}`,
+  providerName: string
+): Promise<{ controllerAddress: `0x${string}` } | null> {
+  try {
+    logger.log(`Trying up_import via ${providerName}...`);
+    const result = await provider.request({
+      method: 'up_import',
+      params: [profileAddress],
+    });
+
+    if (result && typeof result === 'string') {
+      logger.success(`up_import succeeded (${providerName}):`, result);
+      return { controllerAddress: result as `0x${string}` };
+    } else if (result && typeof result === 'object' && 'controllerAddress' in (result as object)) {
+      logger.success(`up_import succeeded (${providerName}):`, result);
+      return result as { controllerAddress: `0x${string}` };
+    }
+
+    logger.warn(`Unexpected up_import result format:`, result);
+  } catch (err) {
+    logger.warn(`up_import not available via ${providerName}:`, err);
+  }
+  return null;
+}
+
 // ============================================================================
 // PROVIDER COMPONENT
 // ============================================================================
@@ -118,23 +161,20 @@ export function WalletContextProvider({ children, luksoConnector }: WalletContex
   const { switchChainAsync } = useSwitchChain();
 
   // General state
-  const [inMiniAppContext, setInMiniAppContext] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [publicClient, setPublicClient] = useState<PublicClient | null>(null);
-  const [initialized, setInitialized] = useState(false);
+  const initialized = useSyncExternalStore(
+    subscribeToClientSnapshot,
+    getClientMountedSnapshot,
+    getServerMountedSnapshot
+  );
+  const inMiniAppContext = useSyncExternalStore(
+    subscribeToClientSnapshot,
+    getClientMiniAppSnapshot,
+    getServerMountedSnapshot
+  );
 
   // Track explicit disconnects to prevent auto-reconnection
   const manuallyDisconnected = useRef(false);
-
-  // ========================================================================
-  // INITIALIZATION
-  // ========================================================================
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    setInMiniAppContext(isInIframe());
-    setInitialized(true);
-  }, []);
 
   // ========================================================================
   // WAGMI STATE SYNC
@@ -148,9 +188,8 @@ export function WalletContextProvider({ children, luksoConnector }: WalletContex
         return;
       }
       logger.log('Wagmi connected:', wagmiAddress);
-      setPublicClient(createClientForChain(wagmiChainId));
     }
-  }, [wagmiConnected, wagmiAddress, wagmiChainId, wagmiDisconnect]);
+  }, [wagmiConnected, wagmiAddress, wagmiDisconnect]);
 
   // ========================================================================
   // COMPUTED STATE
@@ -162,6 +201,10 @@ export function WalletContextProvider({ children, luksoConnector }: WalletContex
   const chainId = wagmiChainId || null;
   const network = chainId ? getNetworkFromChainId(chainId) : null;
   const isProviderReady = wagmiConnected;
+  const publicClient = useMemo<PublicClient | null>(() => {
+    if (!wagmiConnected || !wagmiAddress) return null;
+    return createClientForChain(wagmiChainId);
+  }, [wagmiConnected, wagmiAddress, wagmiChainId]);
 
   const walletSource = useMemo<WalletSource>(() => {
     if (!wagmiConnected || !wagmiConnector) return null;
@@ -262,33 +305,6 @@ export function WalletContextProvider({ children, luksoConnector }: WalletContex
     logger.log('up_import not available for current wallet source');
     return null;
   }, [walletSource, wagmiConnector]);
-
-  async function tryUpImport(
-    provider: EIP1193Provider,
-    profileAddress: `0x${string}`,
-    providerName: string
-  ): Promise<{ controllerAddress: `0x${string}` } | null> {
-    try {
-      logger.log(`Trying up_import via ${providerName}...`);
-      const result = await provider.request({
-        method: 'up_import',
-        params: [profileAddress],
-      });
-
-      if (result && typeof result === 'string') {
-        logger.success(`up_import succeeded (${providerName}):`, result);
-        return { controllerAddress: result as `0x${string}` };
-      } else if (result && typeof result === 'object' && 'controllerAddress' in (result as object)) {
-        logger.success(`up_import succeeded (${providerName}):`, result);
-        return result as { controllerAddress: `0x${string}` };
-      }
-
-      logger.warn(`Unexpected up_import result format:`, result);
-    } catch (err) {
-      logger.warn(`up_import not available via ${providerName}:`, err);
-    }
-    return null;
-  }
 
   const isContractAddress = useCallback(async (addr: `0x${string}`): Promise<boolean> => {
     const client = publicClient || createClientForChain(chainId ?? 4201);

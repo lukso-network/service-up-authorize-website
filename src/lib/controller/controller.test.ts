@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { AuthorizationPackage } from '@/types/auth-package';
 
 /**
@@ -23,7 +23,7 @@ type UpImportResult = { controllerAddress: `0x${string}` } | null;
  * Simulates the up_import call behavior
  */
 function createMockUpImport(behavior: 'success' | 'string-response' | 'object-response' | 'fail' | 'not-supported') {
-  return async (profileAddress: `0x${string}`): Promise<UpImportResult> => {
+  return async (): Promise<UpImportResult> => {
     if (behavior === 'fail') {
       throw new Error('up_import failed');
     }
@@ -349,7 +349,7 @@ describe('Authorization Flow Verification', () => {
   it('should reject when connected address is a contract and up_import unavailable', async () => {
     const mockUpImport = createMockUpImport('not-supported');
     // Simulates connecting with a Universal Profile directly (contract)
-    const mockIsContract = async (addr: `0x${string}`) => true;
+    const mockIsContract = async () => true;
 
     const { controllerAddress, error } = await getControllerAddress(
       MOCK_PROFILE_ADDRESS,

@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { getProfileByAddress, getBestProfileImage } from '@/lib/indexer/queries';
 import type { NetworkId } from '@/constants/endpoints';
-import type { ProfileDetails } from '@/types/profile';
 
 /**
  * Profile data including resolved avatar URL
@@ -17,6 +16,15 @@ export interface ProfileData {
   error: string | null;
 }
 
+const EMPTY_PROFILE_DATA: ProfileData = {
+  address: '',
+  name: null,
+  fullName: null,
+  avatarUrl: null,
+  isLoading: false,
+  error: null,
+};
+
 /**
  * Hook to fetch profile data for a given address.
  * Includes loading and error states.
@@ -29,30 +37,15 @@ export function useProfileData(
   address: string | null | undefined,
   network?: NetworkId | null
 ): ProfileData {
-  const [data, setData] = useState<ProfileData>({
-    address: address || '',
-    name: null,
-    fullName: null,
-    avatarUrl: null,
-    isLoading: false,
-    error: null,
-  });
+  const [data, setData] = useState<ProfileData>(EMPTY_PROFILE_DATA);
 
   useEffect(() => {
     if (!address) {
-      setData({
-        address: '',
-        name: null,
-        fullName: null,
-        avatarUrl: null,
-        isLoading: false,
-        error: null,
-      });
       return;
     }
 
     let cancelled = false;
-    const normalizedAddress = address || '';
+    const normalizedAddress = address;
 
     async function fetchProfile() {
       setData(prev => ({ ...prev, address: normalizedAddress, isLoading: true, error: null }));
@@ -105,7 +98,11 @@ export function useProfileData(
     };
   }, [address, network]);
 
-  return data;
+  if (!address) {
+    return EMPTY_PROFILE_DATA;
+  }
+
+  return data.address === address ? data : { ...EMPTY_PROFILE_DATA, address, isLoading: true };
 }
 
 /**
@@ -119,29 +116,25 @@ export function useImagePreload(src: string | null | undefined): {
   loaded: boolean;
   error: boolean;
 } {
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
+  const [state, setState] = useState<{
+    src: string;
+    loaded: boolean;
+    error: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!src) {
-      setLoaded(false);
-      setError(false);
       return;
     }
-
-    setLoaded(false);
-    setError(false);
 
     const img = new Image();
     
     img.onload = () => {
-      setLoaded(true);
-      setError(false);
+      setState({ src, loaded: true, error: false });
     };
     
     img.onerror = () => {
-      setLoaded(false);
-      setError(true);
+      setState({ src, loaded: false, error: true });
     };
 
     img.src = src;
@@ -152,5 +145,9 @@ export function useImagePreload(src: string | null | undefined): {
     };
   }, [src]);
 
-  return { loaded, error };
+  if (!src || state?.src !== src) {
+    return { loaded: false, error: false };
+  }
+
+  return { loaded: state.loaded, error: state.error };
 }
