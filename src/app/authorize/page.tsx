@@ -68,7 +68,6 @@ function AuthorizeContent() {
   const [removeConfirmationText, setRemoveConfirmationText] = useState('');
 
   // Manual controller entry state
-  const [showManualEntry, setShowManualEntry] = useState(false);
   const [manualControllerAddress, setManualControllerAddress] = useState('');
   const [isManualEntry, setIsManualEntry] = useState(false);
   const [manualEntryError, setManualEntryError] = useState<string | null>(null);
@@ -421,7 +420,6 @@ function AuthorizeContent() {
 
     setAuthPackage(manualAuthPackage);
     setIsManualEntry(true);
-    setShowManualEntry(false);
   };
 
   const explorerUrl = authPackage
@@ -436,75 +434,52 @@ function AuthorizeContent() {
 
   const activePermissions = getActivePermissions(permissions);
 
-  // No auth package in URL - show guidance (unless manual entry is in progress)
+  // No auth package in URL - start directly with manual controller entry
   if (!searchParams.has('data') && !searchParams.has('profile') && !parseError && !authPackage) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-md">
         <Card>
-          <CardHeader className="text-center">
-            <CardTitle>Authorization Required</CardTitle>
-            <CardDescription>
-              Open an authorization link or scan a QR code to authorize a new controller
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground text-center">
-              To authorize a new controller, you need to receive an authorization link from the device
-              with the new wallet.
-            </p>
-            <Button variant="outline" onClick={() => { disconnect(); router.push('/'); }} className="w-full">
-              Go to Home
-            </Button>
-
-            <Separator className="my-4" />
-
-            {!showManualEntry ? (
-              <button
-                type="button"
-                onClick={() => setShowManualEntry(true)}
-                className="w-full text-sm text-primary hover:underline cursor-pointer"
-              >
-                Or enter controller key manually
-              </button>
-            ) : (
-              <div className="space-y-3">
-                <label className="text-sm font-medium">Controller Address</label>
-                <Input
-                  type="text"
-                  placeholder="0x..."
-                  value={manualControllerAddress}
-                  onChange={(e) => {
-                    setManualControllerAddress(e.target.value);
-                    setManualEntryError(null);
+          <CardContent className="pt-6 space-y-4">
+            <div className="space-y-3">
+              <label htmlFor="manual-controller-address" className="text-sm font-medium">
+                Controller Address
+              </label>
+              <Input
+                id="manual-controller-address"
+                type="text"
+                placeholder="0x..."
+                value={manualControllerAddress}
+                onChange={(e) => {
+                  setManualControllerAddress(e.target.value);
+                  setManualEntryError(null);
+                }}
+                className="font-mono text-sm"
+                autoFocus
+              />
+              {manualEntryError && (
+                <Alert variant="destructive">
+                  <AlertDescription>{manualEntryError}</AlertDescription>
+                </Alert>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    disconnect();
+                    router.push('/');
                   }}
-                  className="font-mono text-sm"
-                />
-                {manualEntryError && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{manualEntryError}</AlertDescription>
-                  </Alert>
-                )}
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setShowManualEntry(false);
-                      setManualControllerAddress('');
-                      setManualEntryError(null);
-                    }}
-                    className="flex-1"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleManualControllerSubmit}
-                    className="flex-1"
-                  >
-                    Continue
-                  </Button>
-                </div>
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleManualControllerSubmit}
+                  className="flex-1"
+                >
+                  Continue
+                </Button>
               </div>
-            )}
+            </div>
           </CardContent>
         </Card>
       </div>
