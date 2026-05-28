@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@erc725/erc725.js": "^0.28.2",
-    "@lukso/up-modal": "^0.21.6",
+    "@lukso/up-modal": "^0.21.7",
     "@lukso/up-provider": "^0.3.7",
     "@lukso/web-components": "^1.175.0",
     "@radix-ui/react-avatar": "^1.1.11",
