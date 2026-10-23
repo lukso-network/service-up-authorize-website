@@ -48,3 +48,11 @@ export function getChainById(chainId: number) {
   if (chainId === 4201) return luksoTestnet;
   return null;
 }
+
+/** Human name of a chain for messages ("LUKSO", "LUKSO Testnet", "network 1", "an unknown network"). */
+export function chainLabel(chainId: number | null | undefined): string {
+  if (chainId === 42) return 'LUKSO';
+  if (chainId === 4201) return 'LUKSO Testnet';
+  if (chainId === null || chainId === undefined) return 'an unknown network';
+  return `network ${chainId}`;
+}

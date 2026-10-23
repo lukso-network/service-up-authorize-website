@@ -135,7 +135,7 @@ export function AllowedDataKeysEditor({ entries, onChange, disabled = false }: A
         </CardTitle>
         <CardDescription>
           Restrict which ERC725Y data keys this controller can write to.
-          Leave empty to allow writing to all data keys.
+          With Set Data but no keys it can write nothing; Super Set Data ignores this list.
         </CardDescription>
       </CardHeader>
 

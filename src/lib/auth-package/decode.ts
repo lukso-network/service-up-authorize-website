@@ -20,6 +20,15 @@ function isValidAddress(address: string): address is `0x${string}` {
   return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
 
+function isNetwork(value: unknown): value is 'mainnet' | 'testnet' {
+  return value === 'mainnet' || value === 'testnet';
+}
+
+/** A short display text (the requesting app's name). */
+function isShortText(value: unknown, max = 64): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= max;
+}
+
 /**
  * Decode an authorization package from URL parameters
  */
@@ -48,6 +57,17 @@ export function decodeAuthPackage(
     // Validate addresses
     if (!isValidAddress(data.profileAddress) || !isValidAddress(data.controllerAddress)) {
       console.error('Invalid address format');
+      return null;
+    }
+
+    // An unknown network is refused, never treated as mainnet
+    if (!isNetwork(data.network)) {
+      console.error('Invalid network');
+      return null;
+    }
+
+    if (!data.targetApp || !isShortText(data.targetApp.name)) {
+      console.error('Invalid app name');
       return null;
     }
     
@@ -112,6 +132,11 @@ export function extractAuthPackageFromURL(url: URL | string): AuthorizationPacka
       return null;
     }
     
+    // A present but unknown network is refused; a missing one keeps the original default (mainnet)
+    if (network !== null && !isNetwork(network)) {
+      console.error('Invalid network in URL params');
+      return null;
+    }
     const validNetwork = network === 'testnet' ? 'testnet' : 'mainnet';
     
     return {

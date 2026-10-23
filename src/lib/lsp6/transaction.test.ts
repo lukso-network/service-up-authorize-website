@@ -1,9 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PublicClient } from 'viem';
+import { decodeFunctionData, type PublicClient } from 'viem';
 import {
   buildRemoveControllerTransaction,
+  buildSetDataTransaction,
   findEmptySlot,
+  getControllerArrayLength,
 } from './transaction';
+
+const SET_DATA_BATCH_ABI = [
+  {
+    inputs: [
+      { name: 'dataKeys', type: 'bytes32[]' },
+      { name: 'dataValues', type: 'bytes[]' },
+    ],
+    name: 'setDataBatch',
+    outputs: [],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+] as const;
 import {
   DATA_KEYS,
   buildAddressPermissionsIndexKey,
@@ -77,5 +92,70 @@ describe('findEmptySlot', () => {
     });
 
     await expect(findEmptySlot(client, UP_ADDRESS, 3n)).resolves.toBe(1n);
+  });
+
+  it('fails instead of guessing when a slot cannot be read', async () => {
+    const client = {
+      readContract: vi.fn(async () => {
+        throw new Error('rpc down');
+      }),
+    } as unknown as PublicClient;
+    await expect(findEmptySlot(client, UP_ADDRESS, 2n)).rejects.toThrow('rpc down');
+  });
+});
+
+describe('AddressPermissions[] length', () => {
+  it('reads a 16-byte (uint128) length', async () => {
+    const client = mockPublicClient({ [DATA_KEYS.AddressPermissionsArray]: '0x00000000000000000000000000000003' });
+    await expect(getControllerArrayLength(client, UP_ADDRESS)).resolves.toBe(3n);
+  });
+
+  it('reads a 32-byte length written by older tools instead of treating it as 0', async () => {
+    const client = mockPublicClient({ [DATA_KEYS.AddressPermissionsArray]: `0x${'0'.repeat(63)}3` });
+    await expect(getControllerArrayLength(client, UP_ADDRESS)).resolves.toBe(3n);
+  });
+
+  it('refuses a length value of any other size', async () => {
+    const client = mockPublicClient({ [DATA_KEYS.AddressPermissionsArray]: '0x0000000000000003' });
+    await expect(getControllerArrayLength(client, UP_ADDRESS)).rejects.toThrow(/length/);
+  });
+
+  it('refuses an implausibly large controller list', async () => {
+    const client = mockPublicClient({ [DATA_KEYS.AddressPermissionsArray]: '0x00000000000000010000000000000000' });
+    await expect(getControllerArrayLength(client, UP_ADDRESS)).rejects.toThrow(/length/);
+  });
+
+  it('fails instead of returning 0 when the profile cannot be read', async () => {
+    const client = {
+      readContract: vi.fn(async () => {
+        throw new Error('rpc down');
+      }),
+    } as unknown as PublicClient;
+    await expect(getControllerArrayLength(client, UP_ADDRESS)).rejects.toThrow('rpc down');
+  });
+});
+
+describe('buildSetDataTransaction (existing flow)', () => {
+  it('appends after a 32-byte length instead of overwriting AddressPermissions[0]', async () => {
+    const client = mockPublicClient({
+      [DATA_KEYS.AddressPermissionsArray]: `0x${'0'.repeat(63)}2`,
+      [buildAddressPermissionsIndexKey(0n)]: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      [buildAddressPermissionsIndexKey(1n)]: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    });
+    const calldata = await buildSetDataTransaction(client, UP_ADDRESS, CONTROLLER, 0x200000n);
+    const { args } = decodeFunctionData({ abi: SET_DATA_BATCH_ABI, data: calldata });
+    const [keys, values] = args as [string[], string[]];
+    expect(keys).not.toContain(buildAddressPermissionsIndexKey(0n));
+    expect(keys).toContain(buildAddressPermissionsIndexKey(2n));
+    expect(values[keys.indexOf(DATA_KEYS.AddressPermissionsArray)]).toBe('0x00000000000000000000000000000003');
+  });
+
+  it('does not build a transaction when the profile cannot be read', async () => {
+    const client = {
+      readContract: vi.fn(async () => {
+        throw new Error('rpc down');
+      }),
+    } as unknown as PublicClient;
+    await expect(buildSetDataTransaction(client, UP_ADDRESS, CONTROLLER, 0x200000n)).rejects.toThrow('rpc down');
   });
 });

@@ -59,7 +59,7 @@ export function AllowedCallsEditor({ entries, onChange, disabled = false }: Allo
         </CardTitle>
         <CardDescription>
           Restrict which contracts, functions, or standards this controller can interact with.
-          Leave empty to allow all targets.
+          With Call but no entries it can call nothing; Super Call ignores this list.
         </CardDescription>
       </CardHeader>
 
@@ -207,6 +207,12 @@ function EntryCard({ entry, index, isExpanded, onToggle, onUpdate, onRemove, dis
             )}
             {!entry.callTypes.call && !entry.callTypes.staticCall && !entry.callTypes.delegateCall && (
               <p className="mt-1 text-xs text-destructive">At least one call type must be selected</p>
+            )}
+            {entry.useAnyAddress && entry.useAnyInterface && entry.useAnyFunction && (
+              <p className="mt-1 text-xs text-destructive">
+                Any address, any standard and any function together are rejected by LSP6: calls through this entry will fail.
+                Restrict at least one of them, or use Super Call instead.
+              </p>
             )}
           </div>
 

@@ -12,7 +12,7 @@ import type { AuthorizationPackage } from '@/types/auth-package';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 // ABI for setDataBatch and getData
-const UP_ABI = [
+export const UP_ABI = [
   {
     inputs: [{ name: 'dataKey', type: 'bytes32' }],
     name: 'getData',
@@ -32,7 +32,7 @@ const UP_ABI = [
   },
 ] as const;
 
-function normalizeAddressData(data: unknown): string | null {
+export function normalizeAddressData(data: unknown): string | null {
   if (typeof data !== 'string' || !data.startsWith('0x') || data === '0x') {
     return null;
   }
@@ -45,59 +45,64 @@ function normalizeAddressData(data: unknown): string | null {
   return `0x${hex.slice(-40)}`;
 }
 
+/** No real profile has more controllers; a larger value means the data is broken. */
+export const MAX_CONTROLLER_ARRAY_LENGTH = 1024n;
+
 /**
- * Get the current controller array length from the UP
+ * Parse the AddressPermissions[] length. LSP2 stores it as a uint128 (16 bytes); older tools
+ * wrote 32 bytes. Anything else is refused: guessing would risk overwriting an existing entry.
+ */
+export function parseArrayLength(data: string | undefined | null): bigint {
+  if (!data || data === '0x') return 0n;
+  if (!/^0x(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{64})$/.test(data)) {
+    throw new Error('The profile\'s AddressPermissions[] length is not a 16- or 32-byte number; refusing to change its controller list.');
+  }
+  const length = BigInt(data);
+  if (length > MAX_CONTROLLER_ARRAY_LENGTH) {
+    throw new Error(`The profile's AddressPermissions[] length (${length}) is implausibly large; refusing to change its controller list.`);
+  }
+  return length;
+}
+
+/**
+ * Get the current controller array length from the UP.
+ * Read errors are thrown: returning 0 would make the next write overwrite AddressPermissions[0].
  */
 export async function getControllerArrayLength(
   client: PublicClient,
   upAddress: `0x${string}`
 ): Promise<bigint> {
-  try {
-    const data = await client.readContract({
-      address: upAddress,
-      abi: UP_ABI,
-      functionName: 'getData',
-      args: [DATA_KEYS.AddressPermissionsArray as `0x${string}`],
-    });
-
-    if (!data || data === '0x') {
-      return 0n;
-    }
-
-    // The value is a uint128 (16 bytes)
-    return BigInt(data.slice(0, 34)); // 0x + 32 hex chars
-  } catch (error) {
-    console.error('Error getting controller array length:', error);
-    return 0n;
-  }
+  const data = await client.readContract({
+    address: upAddress,
+    abi: UP_ABI,
+    functionName: 'getData',
+    args: [DATA_KEYS.AddressPermissionsArray as `0x${string}`],
+  });
+  return parseArrayLength(data);
 }
 
 /**
- * Get the permissions of an existing controller
+ * Get the permissions of an existing controller (null when it has none).
+ * Read errors are thrown, never treated as "no permissions".
  */
 export async function getControllerPermissions(
   client: PublicClient,
   upAddress: `0x${string}`,
   controllerAddress: `0x${string}`
 ): Promise<bigint | null> {
-  try {
-    const permissionsKey = buildPermissionsKey(controllerAddress);
-    const data = await client.readContract({
-      address: upAddress,
-      abi: UP_ABI,
-      functionName: 'getData',
-      args: [permissionsKey],
-    });
+  const permissionsKey = buildPermissionsKey(controllerAddress);
+  const data = await client.readContract({
+    address: upAddress,
+    abi: UP_ABI,
+    functionName: 'getData',
+    args: [permissionsKey],
+  });
 
-    if (!data || data === '0x') {
-      return null;
-    }
-
-    return BigInt(data);
-  } catch (error) {
-    console.error('Error getting controller permissions:', error);
+  if (!data || data === '0x') {
     return null;
   }
+
+  return BigInt(data);
 }
 
 /**
@@ -114,7 +119,8 @@ export async function isExistingController(
 
 /**
  * Find an empty slot in the AddressPermissions[] array
- * Returns the index of an empty slot (0x0000...0000 address), or null if none found
+ * Returns the index of an empty slot (0x0000...0000 address), or null if none found.
+ * Read errors are thrown: an unread slot is never assumed to be empty or taken.
  */
 export async function findEmptySlot(
   client: PublicClient,
@@ -123,33 +129,29 @@ export async function findEmptySlot(
 ): Promise<bigint | null> {
   if (arrayLength === 0n) return null;
 
-  try {
-    // Read all array elements to find empty slots
-    for (let i = 0n; i < arrayLength; i++) {
-      const indexKey = buildAddressPermissionsIndexKey(i);
-      const addressData = await client.readContract({
-        address: upAddress,
-        abi: UP_ABI,
-        functionName: 'getData',
-        args: [indexKey],
-      });
+  // Read all array elements to find empty slots
+  for (let i = 0n; i < arrayLength; i++) {
+    const indexKey = buildAddressPermissionsIndexKey(i);
+    const addressData = await client.readContract({
+      address: upAddress,
+      abi: UP_ABI,
+      functionName: 'getData',
+      args: [indexKey],
+    });
 
-      // Check if this slot is empty (0x or 0x0000...0000)
-      const addressInSlot = normalizeAddressData(addressData);
-      if (!addressData || addressData === '0x' || addressInSlot === ZERO_ADDRESS) {
-        return i;
-      }
+    // Check if this slot is empty (0x or 0x0000...0000)
+    const addressInSlot = normalizeAddressData(addressData);
+    if (!addressData || addressData === '0x' || addressInSlot === ZERO_ADDRESS) {
+      return i;
     }
-
-    return null; // No empty slots found
-  } catch (error) {
-    console.error('Error finding empty slot:', error);
-    return null;
   }
+
+  return null; // No empty slots found
 }
 
 /**
  * Find a controller address in AddressPermissions[] without compacting the array.
+ * Read errors are thrown.
  */
 export async function findControllerArrayIndex(
   client: PublicClient,
@@ -160,28 +162,23 @@ export async function findControllerArrayIndex(
   const length = arrayLength ?? await getControllerArrayLength(client, upAddress);
   if (length === 0n) return null;
 
-  try {
-    const targetAddress = controllerAddress.toLowerCase();
+  const targetAddress = controllerAddress.toLowerCase();
 
-    for (let i = 0n; i < length; i++) {
-      const indexKey = buildAddressPermissionsIndexKey(i);
-      const addressData = await client.readContract({
-        address: upAddress,
-        abi: UP_ABI,
-        functionName: 'getData',
-        args: [indexKey],
-      });
+  for (let i = 0n; i < length; i++) {
+    const indexKey = buildAddressPermissionsIndexKey(i);
+    const addressData = await client.readContract({
+      address: upAddress,
+      abi: UP_ABI,
+      functionName: 'getData',
+      args: [indexKey],
+    });
 
-      if (normalizeAddressData(addressData) === targetAddress) {
-        return i;
-      }
+    if (normalizeAddressData(addressData) === targetAddress) {
+      return i;
     }
-
-    return null;
-  } catch (error) {
-    console.error('Error finding controller array index:', error);
-    return null;
   }
+
+  return null;
 }
 
 export interface AddControllerTransactionData {

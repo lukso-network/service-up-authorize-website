@@ -13,7 +13,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { useAccount, useChainId, useDisconnect as useWagmiDisconnect, useSendTransaction, useSwitchChain } from 'wagmi';
 import { createPublicClient, http, type PublicClient } from 'viem';
-import { lukso, luksoTestnet } from '@/lib/utils/chains';
+import { chainLabel, lukso, luksoTestnet } from '@/lib/utils/chains';
 import { getNetworkFromChainId, type NetworkId } from '@/constants/endpoints';
 import { createLogger, logAppStartup } from '@/lib/utils/debug';
 import type { LuksoConnector } from '@lukso/up-modal';
@@ -48,6 +48,8 @@ interface WalletContextState {
   address: `0x${string}` | null;
   contextAddress: `0x${string}` | null;
   chainId: number | null;
+  /** Chain the connected wallet actually reports (null when unknown). Use this for safety checks. */
+  walletChainId: number | null;
   network: NetworkId | null;
   error: string | null;
   walletSource: WalletSource;
@@ -63,6 +65,11 @@ interface WalletContextActions {
     to: `0x${string}`;
     data: `0x${string}`;
     value?: bigint;
+    /**
+     * Chain the transaction must be sent on. When given, the wallet must already be on it:
+     * nothing is switched and nothing is sent otherwise.
+     */
+    chainId?: number;
   }) => Promise<`0x${string}` | null>;
   requestUpImport: (profileAddress: `0x${string}`) => Promise<{ controllerAddress: `0x${string}` } | null>;
   isContractAddress: (address: `0x${string}`) => Promise<boolean>;
@@ -199,6 +206,7 @@ export function WalletContextProvider({ children, luksoConnector }: WalletContex
   const isConnecting = wagmiConnecting;
   const address = wagmiAddress || null;
   const chainId = wagmiChainId || null;
+  const walletChainId = wagmiConnected && wagmiAccountChainId !== undefined ? wagmiAccountChainId : null;
   const network = chainId ? getNetworkFromChainId(chainId) : null;
   const isProviderReady = wagmiConnected;
   const publicClient = useMemo<PublicClient | null>(() => {
@@ -248,11 +256,36 @@ export function WalletContextProvider({ children, luksoConnector }: WalletContex
     to: `0x${string}`;
     data: `0x${string}`;
     value?: bigint;
+    chainId?: number;
   }): Promise<`0x${string}` | null> => {
     if (!isConnected || !address) {
       logger.error('sendTransaction called but not connected');
       setError('Not connected');
       return null;
+    }
+
+    // A required chain is never switched to: the wallet must already be on it.
+    if (params.chainId !== undefined) {
+      if (wagmiAccountChainId !== params.chainId) {
+        const message =
+          `Your wallet is on ${chainLabel(wagmiAccountChainId)}, but this transaction is for ${chainLabel(params.chainId)}. ` +
+          `Switch your wallet to ${chainLabel(params.chainId)} and try again. Nothing was sent.`;
+        logger.error('Refusing to send on the wrong chain:', { wallet: wagmiAccountChainId, required: params.chainId });
+        setError(message);
+        return null;
+      }
+      try {
+        return await sendTransactionAsync({
+          chainId: params.chainId,
+          to: params.to,
+          data: params.data,
+          value: params.value,
+        });
+      } catch (err) {
+        logger.error('Transaction failed:', err);
+        setError(err instanceof Error ? err.message : 'Transaction failed');
+        return null;
+      }
     }
 
     try {
@@ -344,6 +377,7 @@ export function WalletContextProvider({ children, luksoConnector }: WalletContex
     address,
     contextAddress,
     chainId,
+    walletChainId,
     network,
     error,
     walletSource,

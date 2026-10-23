@@ -221,3 +221,29 @@ describe('Controller Address Verification in Decoding', () => {
     expect(decoded?.controllerAddress).not.toBe(decoded?.profileAddress);
   });
 });
+
+describe('extractAuthPackageFromURL: network and field validation', () => {
+  it('rejects an unknown network instead of falling back to mainnet', () => {
+    for (const network of ['bogus', 'Mainnet', '42', '']) {
+      const url = `https://authorize.universalprofile.cloud/authorize?profile=${MOCK_PROFILE_ADDRESS}&controller=${MOCK_CONTROLLER_ADDRESS}&network=${network}`;
+      expect(extractAuthPackageFromURL(url), network).toBeNull();
+    }
+  });
+
+  it('keeps links without a network on mainnet (links made before the parameter existed)', () => {
+    const url = `https://authorize.universalprofile.cloud/authorize?profile=${MOCK_PROFILE_ADDRESS}&controller=${MOCK_CONTROLLER_ADDRESS}`;
+    expect(extractAuthPackageFromURL(url)?.network).toBe('mainnet');
+  });
+
+  it('rejects a base64 package with an unknown network', () => {
+    const { encoded, checksum } = encodeAuthPackage({ ...mockAuthPackage, network: 'bogus' as 'mainnet' });
+    expect(decodeAuthPackage(encoded, checksum)).toBeNull();
+  });
+
+  it('rejects a base64 package whose app name is not short text', () => {
+    for (const name of [{ html: '<b>x</b>' }, 'x'.repeat(65), 42]) {
+      const { encoded, checksum } = encodeAuthPackage({ ...mockAuthPackage, targetApp: { name: name as unknown as string } });
+      expect(decodeAuthPackage(encoded, checksum)).toBeNull();
+    }
+  });
+});
