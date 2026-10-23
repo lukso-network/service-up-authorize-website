@@ -113,7 +113,7 @@ The app uses LSP6 (Key Manager) permissions to control access:
 An AI agent that uses its own controller key (for example the [Universal Profile agent skill](https://github.com/universal-everything/ai-universalprofile-skill)) can ask a person to add it to their **existing** Universal Profile with one link:
 
 ```
-https://authorize.universalprofile.cloud/authorize?controller=0x…&network=mainnet&permissions=CALL,SIGN,EXECUTE_RELAY_CALL&allowedCalls=0x…&allowedDataKeys=0x…&name=Nova&purpose=…
+https://authorize.universalprofile.cloud/authorize?controller=0x…&network=mainnet&name=Nova&purpose=…&forProfile=0x…&permissions=CALL,SIGN,EXECUTE_RELAY_CALL&allowedCalls=0x…&allowedDataKeys=0x…
 ```
 
 The link is an untrusted proposal. It only fills in the review page: nothing is written or signed until the owner connects their profile, reviews the request and approves the transaction in their own wallet.
@@ -125,7 +125,7 @@ The link is an untrusted proposal. It only fills in the review page: nothing is 
 | `permissions` | yes | LSP6 permission names, comma separated, no duplicates. Preselected: `CALL`, `STATICCALL`, `TRANSFERVALUE`, `SETDATA`, `SIGN`, `EXECUTE_RELAY_CALL`, `ENCRYPT`, `DECRYPT`. Shown unticked (the owner must tick them): `SUPER_CALL`, `SUPER_TRANSFERVALUE`, `SUPER_STATICCALL`, `SUPER_SETDATA`, `DEPLOY`. Refused: `CHANGEOWNER`, `ADDCONTROLLER`, `EDITPERMISSIONS`, `ADDEXTENSIONS`, `CHANGEEXTENSIONS`, `ADDUNIVERSALRECEIVERDELEGATE`, `CHANGEUNIVERSALRECEIVERDELEGATE`, `REENTRANCY`, `DELEGATECALL`, `SUPER_DELEGATECALL` |
 | `allowedCalls` | no | The AllowedCalls value exactly as stored by LSP6 (CompactBytesArray of 32-byte entries), 1–16 entries; call types VALUE, CALL, STATICCALL only; no all-wildcard entry, no zero target, no duplicates |
 | `allowedDataKeys` | no | The AllowedERC725YDataKeys value exactly as stored (CompactBytesArray of 1–32-byte keys or prefixes), 1–16 entries; never permission, controller list, Universal Receiver Delegate or extension keys |
-| `profile` | no | The profile the request is for; the connected profile must match. Without it, the connected profile is used |
+| `forProfile` | no | The profile the request is for; the connected profile must match. Without it, the connected profile is used. Named differently from the device-import link's `profile`, so earlier versions of this page never read an agent link as one |
 | `name` | no | Display name of the agent, up to 48 characters, shown as unverified text |
 | `purpose` | no | What the agent says it needs the access for, up to 200 characters, shown as unverified text |
 

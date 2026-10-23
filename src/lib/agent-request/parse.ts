@@ -170,7 +170,7 @@ export function parseAgentRequest(input: { search: string; hash?: string }): Par
   // addresses
   const controller = values.has('controller') ? parseAddress(get('controller'), 'controller', 'The agent address', problem) : undefined;
   if (!values.has('controller')) problem('missing-controller', 'The link does not say which agent address to authorize.', 'controller');
-  const profile = values.has('profile') ? parseAddress(get('profile'), 'profile', 'The profile address', problem) : undefined;
+  const profile = values.has('forProfile') ? parseAddress(get('forProfile'), 'forProfile', 'The profile address', problem) : undefined;
   if (controller && profile && controller === profile) {
     problem('controller-is-profile', 'The agent address is the profile itself; a profile cannot be its own controller.', 'controller');
   }

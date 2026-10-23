@@ -106,7 +106,7 @@ describe('AgentAuthorizeFlow: checks after connecting', () => {
 
   it('blocks a different profile than the one the link is for', async () => {
     connect({ address: OTHER_PROFILE });
-    render(<AgentAuthorizeFlow search={link({ profile: PROFILE })} hash="" />);
+    render(<AgentAuthorizeFlow search={link({ forProfile: PROFILE })} hash="" />);
     expect(screen.getByText(/connect that profile instead/i)).toBeInTheDocument();
     expect(authorizeButton()).toBeDisabled();
   });
@@ -235,10 +235,10 @@ describe('AgentAuthorizeFlow: authorizing', () => {
 describe('AgentAuthorizeFlow: account changes', () => {
   it('re-checks when the wallet switches to another account', async () => {
     connect();
-    const { rerender } = render(<AgentAuthorizeFlow search={link({ profile: PROFILE })} hash="" />);
+    const { rerender } = render(<AgentAuthorizeFlow search={link({ forProfile: PROFILE })} hash="" />);
     await screen.findByText(/not a controller of this profile yet/i);
     connect({ address: OTHER_PROFILE });
-    rerender(<AgentAuthorizeFlow search={link({ profile: PROFILE })} hash="" />);
+    rerender(<AgentAuthorizeFlow search={link({ forProfile: PROFILE })} hash="" />);
     await waitFor(() => expect(screen.getByText(/connect that profile instead/i)).toBeInTheDocument());
     expect(screen.getByText('Nova')).toBeInTheDocument();
     expect(authorizeButton()).toBeDisabled();

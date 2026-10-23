@@ -13,14 +13,16 @@ export const REQUEST_PARAMS = [
   'permissions',
   'allowedCalls',
   'allowedDataKeys',
-  'profile',
+  // `forProfile`, not `profile`: older versions of this page read `profile` + `controller` as the device-import
+  // link (with a broad preset), so an agent link must never carry that pair.
+  'forProfile',
   'name',
   'purpose',
 ] as const;
 export type RequestParam = (typeof REQUEST_PARAMS)[number];
 
 /** Any of these turns /authorize into the agent request flow. */
-export const REQUEST_ONLY_PARAMS = ['permissions', 'allowedCalls', 'allowedDataKeys', 'name', 'purpose'] as const;
+export const REQUEST_ONLY_PARAMS = ['permissions', 'allowedCalls', 'allowedDataKeys', 'forProfile', 'name', 'purpose'] as const;
 
 /** Parameters of the older link formats (plain profile/controller link, base64 package). */
 export const LEGACY_PARAMS = ['profile', 'data', 'cs'] as const;
