@@ -73,6 +73,8 @@ npm run test:e2e
 npm run test:e2e:ui
 ```
 
+`e2e/agent-request.spec.ts` covers agent authorization links on desktop and phone sizes, including a connected flow with a mock UP browser extension and a mock LUKSO RPC (it checks the exact transaction the page builds; it is not an on-chain test). Set `AGENT_E2E_SHOTS=<dir>` to save screenshots.
+
 ## How It Works
 
 ### Migration Flow
@@ -106,6 +108,39 @@ The app uses LSP6 (Key Manager) permissions to control access:
 | SIGN | Sign messages on behalf of the profile |
 | And more... | Full LSP6 permission support |
 
+### Agent Authorization Links (AI agents)
+
+An AI agent that uses its own controller key (for example the [Universal Profile agent skill](https://github.com/universal-everything/ai-universalprofile-skill)) can ask a person to add it to their **existing** Universal Profile with one link:
+
+```
+https://authorize.universalprofile.cloud/authorize?controller=0x…&network=mainnet&permissions=CALL,SIGN,EXECUTE_RELAY_CALL&allowedCalls=0x…&allowedDataKeys=0x…&name=Nova&purpose=…
+```
+
+The link is an untrusted proposal. It only fills in the review page: nothing is written or signed until the owner connects their profile, reviews the request and approves the transaction in their own wallet.
+
+| Parameter | Required | Format and rules |
+|-----------|----------|------------------|
+| `controller` | yes | The agent's address: `0x` + 40 hex; EIP-55 checksum checked when mixed case; not zero, not the wildcard address, not the profile itself |
+| `network` | yes | `mainnet` (LUKSO). The wallet connection of this site supports LUKSO mainnet only, so a LUKSO Testnet request is refused with an explanation, never switched |
+| `permissions` | yes | LSP6 permission names, comma separated, no duplicates. Preselected: `CALL`, `STATICCALL`, `TRANSFERVALUE`, `SETDATA`, `SIGN`, `EXECUTE_RELAY_CALL`, `ENCRYPT`, `DECRYPT`. Shown unticked (the owner must tick them): `SUPER_CALL`, `SUPER_TRANSFERVALUE`, `SUPER_STATICCALL`, `SUPER_SETDATA`, `DEPLOY`. Refused: `CHANGEOWNER`, `ADDCONTROLLER`, `EDITPERMISSIONS`, `ADDEXTENSIONS`, `CHANGEEXTENSIONS`, `ADDUNIVERSALRECEIVERDELEGATE`, `CHANGEUNIVERSALRECEIVERDELEGATE`, `REENTRANCY`, `DELEGATECALL`, `SUPER_DELEGATECALL` |
+| `allowedCalls` | no | The AllowedCalls value exactly as stored by LSP6 (CompactBytesArray of 32-byte entries), 1–16 entries; call types VALUE, CALL, STATICCALL only; no all-wildcard entry, no zero target, no duplicates |
+| `allowedDataKeys` | no | The AllowedERC725YDataKeys value exactly as stored (CompactBytesArray of 1–32-byte keys or prefixes), 1–16 entries; never permission, controller list, Universal Receiver Delegate or extension keys |
+| `profile` | no | The profile the request is for; the connected profile must match. Without it, the connected profile is used |
+| `name` | no | Display name of the agent, up to 48 characters, shown as unverified text |
+| `purpose` | no | What the agent says it needs the access for, up to 200 characters, shown as unverified text |
+
+Every other parameter, a repeated parameter, an empty value, a `#` fragment or a link longer than 4096 characters blocks the request with a visible list of problems; nothing is ever dropped or widened to a default. A link that looks like it carries a private key, seed or password is blocked and removed from the address bar.
+
+What the owner sees and does:
+
+1. The whole request before connecting: the agent's full address (grouped, with its identicon) to compare with what the agent showed, the permissions in plain words with their risk, the decoded allowed calls and data keys, and what an agent link can never grant.
+2. Connect: the **UP Browser Extension** ("Browser Extension" in the dialog; it opens the extension store if it is missing) or the **Universal Profile mobile app** ("Mobile Application": a QR code to scan on a computer; on a phone it opens the app through WalletConnect and returns to the page). Inside Universal Everything the page connects through the UP Provider.
+3. Checks: the wallet is on the request's network (it is never switched for the owner), the profile matches, the account is a Universal Profile, and the agent's current permissions on it (an existing controller shows what changes).
+4. The owner can untick requested permissions (never add any), confirms that the agent address matches, and approves the transaction in the wallet.
+5. The transaction sets exactly the reviewed state for this one controller (permissions, AllowedCalls, AllowedERC725YDataKeys; one `AddressPermissions[]` slot when it is new) and nothing else. Afterwards the page reads the controller back and reports success only on an exact match, together with the profile address to send back to the agent.
+
+LSP6 has no spending limits or expiry dates: `TRANSFERVALUE` limits recipients, not amounts. The page says so. Links never contain secrets; the page sets `Referrer-Policy: strict-origin` (no path or query is sent to other sites). On a phone, the UP mobile app receives the page address as its return link.
+
 ## Project Structure
 
 ```
@@ -120,12 +155,14 @@ src/
 │   ├── wallet/            # Wallet connection components
 │   ├── search/            # Profile search components
 │   ├── migration/         # Migration flow components
+│   ├── agent/             # Agent authorization request flow
 │   └── shared/            # Shared utilities
 ├── hooks/                 # React hooks
 ├── lib/                   # Utility libraries
 │   ├── indexer/          # GraphQL client & queries
 │   ├── lsp6/             # LSP6 transaction building
 │   ├── auth-package/     # Auth package encode/decode
+│   ├── agent-request/    # Agent authorization link parser and descriptions
 │   └── utils/            # General utilities
 ├── types/                 # TypeScript types
 └── constants/            # Constants and configurations

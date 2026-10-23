@@ -32,6 +32,9 @@ export const metadata: Metadata = {
     icon: '/icon.png',
     apple: '/apple-touch-icon.png',
   },
+  // Links to this site carry addresses and requested permissions in the query string: never pass
+  // the path or query on to other sites (only the origin, which WalletConnect's domain check uses).
+  referrer: 'strict-origin',
 };
 
 export default function RootLayout({

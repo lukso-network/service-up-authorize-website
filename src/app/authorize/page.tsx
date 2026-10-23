@@ -27,8 +27,10 @@ import { WalletConnector, WalletConnectorCompact } from '@/components/wallet/Wal
 import { useWallet } from '@/contexts/WalletContext';
 import { extractAuthPackageFromURL } from '@/lib/auth-package/decode';
 import { shortenAddress } from '@/lib/utils/format';
-import { lukso, luksoTestnet } from '@/lib/utils/chains';
-import { getEndpoints } from '@/constants/endpoints';
+import { chainLabel, lukso, luksoTestnet } from '@/lib/utils/chains';
+import { CHAIN_IDS, getEndpoints } from '@/constants/endpoints';
+import { authorizeLinkMode } from '@/lib/agent-request/parse';
+import { AgentAuthorizeFlow } from '@/components/agent/AgentAuthorizeFlow';
 import { PERMISSION_PRESETS, getActivePermissions, PERMISSION_LABELS, PERMISSIONS, hasPermission } from '@/constants/permissions';
 import { buildRemoveControllerTransaction, buildSetDataTransaction } from '@/lib/lsp6/transaction';
 import {
@@ -48,6 +50,7 @@ function AuthorizeContent() {
     address,
     isConnected,
     network,
+    walletChainId,
     error: walletError,
     walletSource,
     isInMiniAppContext,
@@ -174,6 +177,13 @@ function AuthorizeContent() {
   useEffect(() => {
     const hasPlainText = searchParams.get('profile') && searchParams.get('controller');
     const hasLegacy = searchParams.get('data') && searchParams.get('cs');
+    const hasLinkParams = searchParams.has('profile') || searchParams.has('data') || searchParams.has('cs');
+
+    if (!hasPlainText && !hasLegacy && hasLinkParams) {
+      // An incomplete link used to leave the page on a spinner forever
+      queueMicrotask(() => setParseError('Invalid authorization link. Please check and try again.'));
+      return;
+    }
 
     if (hasPlainText || hasLegacy) {
       queueMicrotask(() => {
@@ -314,10 +324,11 @@ function AuthorizeContent() {
         encodedAllowedDataKeys
       );
 
-      // Send the transaction using our unified wallet context
+      // Send the transaction using our unified wallet context, only on the link's network
       const hash = await sendTransaction({
         to: authPackage.profileAddress,
         data: txData,
+        chainId: CHAIN_IDS[authPackage.network],
       });
 
       if (hash) {
@@ -361,6 +372,7 @@ function AuthorizeContent() {
       const hash = await sendTransaction({
         to: authPackage.profileAddress,
         data: calldata,
+        chainId: CHAIN_IDS[authPackage.network],
       });
 
       if (hash) {
@@ -433,6 +445,14 @@ function AuthorizeContent() {
     (permissions & PERMISSIONS.ADDCONTROLLER) !== 0n;
 
   const activePermissions = getActivePermissions(permissions);
+
+  // The transaction is built from this network's state, so it may only be sent there (never switched)
+  const expectedChainId = authPackage ? CHAIN_IDS[authPackage.network] : null;
+  const wrongChain = isConnected && expectedChainId !== null && walletChainId !== expectedChainId;
+  const wrongChainMessage = wrongChain
+    ? `Your wallet is on ${chainLabel(walletChainId)}, but this authorization is for ${chainLabel(expectedChainId)}. ` +
+      `Switch your wallet to ${chainLabel(expectedChainId)}; nothing is sent before that.`
+    : null;
 
   // No auth package in URL - start directly with manual controller entry
   if (!searchParams.has('data') && !searchParams.has('profile') && !parseError && !authPackage) {
@@ -801,6 +821,13 @@ function AuthorizeContent() {
                 </Alert>
               )}
 
+              {/* Wallet on another network than the link */}
+              {wrongChainMessage && (
+                <Alert variant="destructive" className="w-full">
+                  <AlertDescription>{wrongChainMessage}</AlertDescription>
+                </Alert>
+              )}
+
               <div className="flex gap-3 w-full">
                 <Button
                   variant="outline"
@@ -812,7 +839,7 @@ function AuthorizeContent() {
                 </Button>
                 <Button
                   onClick={handleAuthorize}
-                  disabled={status === 'authorizing' || activePermissions.length === 0 || !!profileMatchError || isValidatingController}
+                  disabled={status === 'authorizing' || activePermissions.length === 0 || !!profileMatchError || isValidatingController || wrongChain}
                   className="flex-1"
                 >
                   {isValidatingController ? 'Validating...' : status === 'authorizing' ? 'Authorizing...' : 'Authorize'}
@@ -851,7 +878,7 @@ function AuthorizeContent() {
                   setRemoveConfirmationText('');
                   setRemoveConfirmStep(1);
                 }}
-                disabled={status === 'authorizing' || !!profileMatchError || isValidatingController}
+                disabled={status === 'authorizing' || !!profileMatchError || isValidatingController || wrongChain}
                 className="w-full"
               >
                 Remove Controller Key
@@ -987,6 +1014,25 @@ function AuthorizeContent() {
   );
 }
 
+/**
+ * Agent authorization requests (an AI agent asking to act for the connected profile) have their
+ * own review flow. The link is read once per visit: the address bar may be cleaned afterwards
+ * (a link that carries a secret is removed from it), which must not change what is shown.
+ */
+function AgentAuthorizeEntry() {
+  const [location] = useState(() =>
+    typeof window === 'undefined' ? { search: '', hash: '' } : { search: window.location.search, hash: window.location.hash }
+  );
+  return <AgentAuthorizeFlow search={location.search} hash={location.hash} />;
+}
+
+function AuthorizeRouter() {
+  const [mode] = useState(() =>
+    typeof window === 'undefined' ? 'manual' : authorizeLinkMode(new URLSearchParams(window.location.search))
+  );
+  return mode === 'agent' ? <AgentAuthorizeEntry /> : <AuthorizeContent />;
+}
+
 export default function AuthorizePage() {
   return (
     <Suspense fallback={
@@ -994,7 +1040,7 @@ export default function AuthorizePage() {
         <LoadingSpinner size="lg" />
       </div>
     }>
-      <AuthorizeContent />
+      <AuthorizeRouter />
     </Suspense>
   );
 }
