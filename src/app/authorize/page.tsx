@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, Suspense } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createPublicClient, http } from 'viem';
 import { Button } from '@/components/ui/button';
@@ -17,9 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { PermissionSelector } from '@/components/migration/PermissionSelector';
-import { AllowedCallsEditor } from '@/components/migration/AllowedCallsEditor';
-import { AllowedDataKeysEditor } from '@/components/migration/AllowedDataKeysEditor';
+import { PermissionsEditor } from '@/components/migration/PermissionsEditor';
 import { MigrationStatus } from '@/components/migration/MigrationStatus';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ProfileIdentityCard } from '@/components/shared/ProfileIdentityCard';
@@ -31,7 +29,7 @@ import { chainLabel, lukso, luksoTestnet } from '@/lib/utils/chains';
 import { CHAIN_IDS, getEndpoints } from '@/constants/endpoints';
 import { authorizeLinkMode } from '@/lib/agent-request/parse';
 import { AgentAuthorizeFlow } from '@/components/agent/AgentAuthorizeFlow';
-import { PERMISSION_PRESETS, getActivePermissions, PERMISSION_LABELS, PERMISSIONS, hasPermission } from '@/constants/permissions';
+import { PERMISSION_PRESETS, getActivePermissions, PERMISSION_LABELS, PERMISSIONS } from '@/constants/permissions';
 import { buildRemoveControllerTransaction, buildSetDataTransaction } from '@/lib/lsp6/transaction';
 import {
   encodeAllowedCalls,
@@ -78,98 +76,6 @@ function AuthorizeContent() {
   // AllowedCalls and AllowedDataKeys state
   const [allowedCallEntries, setAllowedCallEntries] = useState<AllowedCallEntry[]>([]);
   const [allowedDataKeyEntries, setAllowedDataKeyEntries] = useState<DataKeyEntry[]>([]);
-
-  // SUPER permission confirmation dialog state
-  const [superConfirmDialog, setSuperConfirmDialog] = useState<{
-    open: boolean;
-    type: 'SUPER_CALL' | 'SUPER_SETDATA';
-    pendingPermissions: bigint;
-  }>({ open: false, type: 'SUPER_CALL', pendingPermissions: 0n });
-
-  // SUPER permission interaction: when adding AllowedCalls entries, auto-untick SUPER_CALL and ensure CALL
-  const handleAllowedCallsChange = useCallback((entries: AllowedCallEntry[]) => {
-    setAllowedCallEntries(entries);
-    if (entries.length > 0) {
-      let newPerms = permissions;
-      // Remove SUPER_CALL if it's set
-      if (hasPermission(newPerms, PERMISSIONS.SUPER_CALL)) {
-        newPerms = newPerms ^ PERMISSIONS.SUPER_CALL;
-      }
-      // Ensure CALL is set
-      if (!hasPermission(newPerms, PERMISSIONS.CALL)) {
-        newPerms = newPerms | PERMISSIONS.CALL;
-      }
-      if (newPerms !== permissions) {
-        setPermissions(newPerms);
-      }
-    }
-  }, [permissions]);
-
-  // SUPER permission interaction: when adding AllowedDataKeys entries, auto-untick SUPER_SETDATA and ensure SETDATA
-  const handleAllowedDataKeysChange = useCallback((entries: DataKeyEntry[]) => {
-    setAllowedDataKeyEntries(entries);
-    if (entries.length > 0) {
-      let newPerms = permissions;
-      // Remove SUPER_SETDATA if it's set
-      if (hasPermission(newPerms, PERMISSIONS.SUPER_SETDATA)) {
-        newPerms = newPerms ^ PERMISSIONS.SUPER_SETDATA;
-      }
-      // Ensure SETDATA is set
-      if (!hasPermission(newPerms, PERMISSIONS.SETDATA)) {
-        newPerms = newPerms | PERMISSIONS.SETDATA;
-      }
-      if (newPerms !== permissions) {
-        setPermissions(newPerms);
-      }
-    }
-  }, [permissions]);
-
-  // Handle permission changes from PermissionSelector with SUPER interaction
-  const handlePermissionsChange = useCallback((newPermissions: bigint) => {
-    // Check if SUPER_CALL is being turned ON while AllowedCalls entries exist
-    if (
-      hasPermission(newPermissions, PERMISSIONS.SUPER_CALL) &&
-      !hasPermission(permissions, PERMISSIONS.SUPER_CALL) &&
-      allowedCallEntries.length > 0
-    ) {
-      setSuperConfirmDialog({
-        open: true,
-        type: 'SUPER_CALL',
-        pendingPermissions: newPermissions,
-      });
-      return;
-    }
-
-    // Check if SUPER_SETDATA is being turned ON while AllowedDataKeys entries exist
-    if (
-      hasPermission(newPermissions, PERMISSIONS.SUPER_SETDATA) &&
-      !hasPermission(permissions, PERMISSIONS.SUPER_SETDATA) &&
-      allowedDataKeyEntries.length > 0
-    ) {
-      setSuperConfirmDialog({
-        open: true,
-        type: 'SUPER_SETDATA',
-        pendingPermissions: newPermissions,
-      });
-      return;
-    }
-
-    setPermissions(newPermissions);
-  }, [permissions, allowedCallEntries.length, allowedDataKeyEntries.length]);
-
-  // Confirm SUPER permission: clear entries and apply permissions
-  const confirmSuperPermission = useCallback(() => {
-    if (superConfirmDialog.type === 'SUPER_CALL') {
-      setAllowedCallEntries([]);
-    } else {
-      setAllowedDataKeyEntries([]);
-    }
-    setPermissions(superConfirmDialog.pendingPermissions);
-    setSuperConfirmDialog({ open: false, type: 'SUPER_CALL', pendingPermissions: 0n });
-  }, [superConfirmDialog]);
-
-  const hasSuperCall = hasPermission(permissions, PERMISSIONS.SUPER_CALL);
-  const hasSuperSetData = hasPermission(permissions, PERMISSIONS.SUPER_SETDATA);
 
   // Parse auth package from URL (only runs once on mount)
   // Supports both plain-text format (?profile=...&controller=...&network=...)
@@ -723,42 +629,16 @@ function AuthorizeContent() {
             </CardContent>
           </Card>
 
-          {/* Permission Selector - THE AUTHORIZER CHOOSES PERMISSIONS */}
-          <PermissionSelector
+          {/* Permissions: THE AUTHORIZER CHOOSES PERMISSIONS and restrictions */}
+          <PermissionsEditor
             permissions={permissions}
-            onPermissionsChange={handlePermissionsChange}
+            onPermissionsChange={setPermissions}
+            allowedCalls={allowedCallEntries}
+            onAllowedCallsChange={setAllowedCallEntries}
+            allowedDataKeys={allowedDataKeyEntries}
+            onAllowedDataKeysChange={setAllowedDataKeyEntries}
             disabled={status === 'authorizing'}
           />
-
-          {/* AllowedCalls Editor - hidden when SUPER_CALL is enabled */}
-          {hasSuperCall ? (
-            <Alert>
-              <AlertDescription className="text-sm">
-                <strong>SUPER_CALL</strong> is enabled — this controller can call any contract without restrictions. AllowedCalls configuration is not needed.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <AllowedCallsEditor
-              entries={allowedCallEntries}
-              onChange={handleAllowedCallsChange}
-              disabled={status === 'authorizing'}
-            />
-          )}
-
-          {/* AllowedDataKeys Editor - hidden when SUPER_SETDATA is enabled */}
-          {hasSuperSetData ? (
-            <Alert>
-              <AlertDescription className="text-sm">
-                <strong>SUPER_SETDATA</strong> is enabled — this controller can write to any data key without restrictions. AllowedDataKeys configuration is not needed.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <AllowedDataKeysEditor
-              entries={allowedDataKeyEntries}
-              onChange={handleAllowedDataKeysChange}
-              disabled={status === 'authorizing'}
-            />
-          )}
 
           {/* Permission Summary & Actions */}
           <Card>
@@ -885,43 +765,6 @@ function AuthorizeContent() {
               </Button>
             </CardContent>
           </Card>
-
-          {/* SUPER Permission Confirmation Dialog */}
-          <Dialog
-            open={superConfirmDialog.open}
-            onOpenChange={(open) => {
-              if (!open) {
-                setSuperConfirmDialog({ open: false, type: 'SUPER_CALL', pendingPermissions: 0n });
-              }
-            }}
-          >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>
-                  Enable {superConfirmDialog.type === 'SUPER_CALL' ? 'SUPER_CALL' : 'SUPER_SETDATA'}?
-                </DialogTitle>
-                <DialogDescription>
-                  {superConfirmDialog.type === 'SUPER_CALL'
-                    ? 'Enabling SUPER_CALL bypasses all AllowedCalls restrictions. Your configured AllowedCalls entries will be removed.'
-                    : 'Enabling SUPER_SETDATA bypasses all AllowedDataKeys restrictions. Your configured AllowedDataKeys entries will be removed.'}
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setSuperConfirmDialog({ open: false, type: 'SUPER_CALL', pendingPermissions: 0n })}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={confirmSuperPermission}
-                >
-                  Enable &amp; Clear Entries
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
 
           {/* Controller Removal Confirmation 1 */}
           <Dialog

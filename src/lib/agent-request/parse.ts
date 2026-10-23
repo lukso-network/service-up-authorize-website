@@ -342,7 +342,8 @@ function parseText(
   return text;
 }
 
-function requestNotes(value: bigint, calls: DecodedAllowedCall[], keys: Hex[]): string[] {
+/** Plain-words notes about parts of a selection (the link's, or the owner's edit of it) that would have no effect. */
+export function requestNotes(value: bigint, calls: DecodedAllowedCall[], keys: Hex[]): string[] {
   const has = (p: PermissionKey) => (value & PERMISSIONS[p]) !== 0n;
   const anyType = (bit: number) => calls.some((c) => (c.callTypes & bit) !== 0);
   const notes: string[] = [];
@@ -359,16 +360,16 @@ function requestNotes(value: bigint, calls: DecodedAllowedCall[], keys: Hex[]): 
     notes.push('SETDATA has no effect here: no allowed data key is listed.');
   }
   if (anyType(CALL_TYPE.VALUE) && !has('TRANSFERVALUE') && !has('SUPER_TRANSFERVALUE')) {
-    notes.push('Some allowed calls may send LYX, but TRANSFERVALUE is not requested, so no LYX can be sent.');
+    notes.push('Some allowed calls may send LYX, but TRANSFERVALUE is not selected, so no LYX can be sent.');
   }
   if (anyType(CALL_TYPE.CALL) && !has('CALL') && !has('SUPER_CALL')) {
-    notes.push('Some allowed calls are contract calls, but CALL is not requested, so they cannot be used.');
+    notes.push('Some allowed calls are contract calls, but CALL is not selected, so they cannot be used.');
   }
   if (anyType(CALL_TYPE.STATICCALL) && !has('STATICCALL') && !has('SUPER_STATICCALL')) {
-    notes.push('Some allowed calls are read-only calls, but STATICCALL is not requested, so they cannot be used.');
+    notes.push('Some allowed calls are read-only calls, but STATICCALL is not selected, so they cannot be used.');
   }
   if (keys.length && !has('SETDATA') && !has('SUPER_SETDATA')) {
-    notes.push('Data keys are listed, but SETDATA is not requested, so they cannot be written.');
+    notes.push('Data keys are listed, but SETDATA is not selected, so they cannot be written.');
   }
   return notes;
 }

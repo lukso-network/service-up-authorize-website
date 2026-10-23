@@ -1,11 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { getAddress, type Hex } from 'viem';
 
 const PROFILE = getAddress('0x9a3dbca554e9f6b9257aaa24010da8377c57c17e');
 const OTHER_PROFILE = getAddress('0x1234567890abcdef1234567890abcdef12345678');
 const CONTROLLER = getAddress('0x5e1c0de0f9b12c2c3ab5a9c1f1b7d0d2a6e4b3c1');
 const FOLLOW = `0x0020${'00000002'}${'f01103e5a9909fc0dbe8166da7085e0285daddca'}ffffffff4dbf27cc` as Hex;
+const UNFOLLOW = `0020${'00000002'}${'f01103e5a9909fc0dbe8166da7085e0285daddca'}ffffffff015a4ead`;
+const LSP3 = '5ef83ad9559033e6e941db7d7c495acdce616347d28e90c7ce47cbfcfcad3bc5';
+const RECIPIENT = getAddress('0x1234567890abcdef1234567890abcdef12345678');
+const CALL = 0x800n;
+const SIGN = 0x200000n;
+const RELAY = 0x400000n;
+const DEPLOY = 0x10000n;
+const SUPER_CALL = 0x400n;
 
 const mocks = vi.hoisted(() => ({
   wallet: {} as Record<string, unknown>,
@@ -64,6 +72,15 @@ beforeEach(() => {
 
 const authorizeButton = () => screen.getByRole('button', { name: /authorize agent/i });
 const acknowledge = () => fireEvent.click(screen.getByRole('checkbox', { name: /i asked for this agent/i }));
+const box = (name: RegExp) => screen.getByRole('checkbox', { name });
+const changes = () => screen.getByTestId('request-changes');
+async function approve() {
+  await screen.findByText(/not a controller of this profile yet/i);
+  acknowledge();
+  fireEvent.click(authorizeButton());
+  await screen.findByText(/authorized and verified/i);
+  return mocks.planControllerGrant.mock.calls[0][3];
+}
 
 describe('AgentAuthorizeFlow: links that cannot be used', () => {
   it('lists the problems and offers no way to connect', () => {
@@ -133,7 +150,7 @@ describe('AgentAuthorizeFlow: checks after connecting', () => {
     mocks.readControllerState.mockResolvedValue({ ...NEW_STATE, permissions: 0x200000n | 0x40000n, arrayIndex: 1n });
     render(<AgentAuthorizeFlow search={link()} hash="" />);
     expect(await screen.findByText(/already a controller of this profile/i)).toBeInTheDocument();
-    expect(screen.getByText(/SETDATA/)).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Checks' })).getByText(/SETDATA/)).toBeInTheDocument();
   });
 });
 
@@ -242,5 +259,175 @@ describe('AgentAuthorizeFlow: account changes', () => {
     await waitFor(() => expect(screen.getByText(/connect that profile instead/i)).toBeInTheDocument());
     expect(screen.getByText('Nova')).toBeInTheDocument();
     expect(authorizeButton()).toBeDisabled();
+  });
+});
+
+describe('AgentAuthorizeFlow: the site’s permissions editor, prefilled from the link', () => {
+  it('fills the existing editor: requested permissions ticked, the rest offered, the link’s limits as entries', () => {
+    render(<AgentAuthorizeFlow search={link()} hash="" />);
+    expect(screen.getByRole('tab', { name: 'Custom' })).toHaveAttribute('data-state', 'active');
+    expect(box(/use the contracts listed below/i)).toBeChecked();
+    expect(box(/sign messages as your profile/i)).toBeChecked();
+    expect(box(/act without its own gas/i)).toBeChecked();
+    expect(box(/change the profile data listed below/i)).not.toBeChecked();
+    expect(box(/create new contracts from your profile/i)).toBeEnabled();
+    expect(screen.getByText(/Call: the LSP26 follower registry .* follow a profile/)).toBeInTheDocument();
+    expect(within(changes()).getByText(/exactly what Nova asked for/i)).toBeInTheDocument();
+  });
+
+  it('never offers what an agent may never get', () => {
+    render(<AgentAuthorizeFlow search={link()} hash="" />);
+    // the 13 permissions an agent link may ask for, nothing else
+    const offered = screen.getAllByRole('checkbox').map((c) => c.closest('label')?.textContent ?? '');
+    expect(offered).toHaveLength(13);
+    for (const key of ['CHANGEOWNER', 'ADDCONTROLLER', 'EDITPERMISSIONS', 'ADDEXTENSIONS', 'CHANGEEXTENSIONS', 'ADDUNIVERSALRECEIVERDELEGATE', 'CHANGEUNIVERSALRECEIVERDELEGATE', 'REENTRANCY', 'DELEGATECALL']) {
+      expect(offered.join(' ')).not.toMatch(new RegExp(`\\b${key}\\b`));
+    }
+    expect(screen.queryByRole('button', { name: /Full Control/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /LSP17 Extensions/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Universal Receiver Delegate/ })).toBeNull();
+  });
+
+  it('keeps high-risk permissions unticked until the owner ticks them, and warns when ticked', async () => {
+    render(<AgentAuthorizeFlow search={link({ permissions: 'SIGN,SUPER_CALL' })} hash="" />);
+    expect(box(/call any contract as your profile/i)).not.toBeChecked();
+    expect(within(changes()).getByText(/not selected.*SUPER_CALL/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('elevated-warning')).toBeNull();
+    fireEvent.click(box(/call any contract as your profile/i));
+    fireEvent.click(await screen.findByRole('button', { name: /Enable & Clear Entries/ }));
+    await waitFor(() => expect(screen.getByTestId('elevated-warning')).toHaveTextContent(/SUPER_CALL/));
+  });
+
+  it('writes a permission the owner unticked and ticked again, and one the agent did not ask for', async () => {
+    connect();
+    render(<AgentAuthorizeFlow search={link()} hash="" />);
+    fireEvent.click(box(/sign messages as your profile/i));
+    expect(within(changes()).getByText(/not selected.*SIGN/i)).toBeInTheDocument();
+    fireEvent.click(box(/sign messages as your profile/i));
+    fireEvent.click(box(/create new contracts from your profile/i));
+    expect(within(changes()).getByText(/added by you.*DEPLOY/i)).toBeInTheDocument();
+    expect(screen.getByTestId('elevated-warning')).toHaveTextContent(/DEPLOY/);
+    expect((await approve()).permissions).toBe(CALL | SIGN | RELAY | DEPLOY);
+  });
+
+  it('writes the owner’s edited limits: a removed allowed call and an added data key', async () => {
+    connect();
+    render(<AgentAuthorizeFlow search={link({ allowedCalls: `${FOLLOW}${UNFOLLOW}`, permissions: 'CALL,SETDATA,EXECUTE_RELAY_CALL' })} hash="" />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove entry' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'LSP3Profile' }));
+    expect(within(changes()).getByText(/allowed call removed.*unfollow a profile/i)).toBeInTheDocument();
+    expect(within(changes()).getByText(/data key added.*LSP3Profile/i)).toBeInTheDocument();
+    const target = await approve();
+    expect(target).toEqual({ permissions: CALL | 0x40000n | RELAY, allowedCalls: FOLLOW.toLowerCase(), allowedDataKeys: `0x0020${LSP3}` });
+    expect(mocks.grantMatches).toHaveBeenCalledWith(NEW_STATE, target);
+  });
+
+  it('never adds a permission on its own when the owner edits the limits', () => {
+    render(<AgentAuthorizeFlow search={link({ permissions: 'SIGN' })} hash="" />);
+    fireEvent.click(screen.getByRole('button', { name: /Add Allowed Call Entry/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'LSP3Profile' }));
+    expect(box(/use the contracts listed below/i)).not.toBeChecked();
+    expect(box(/change the profile data listed below/i)).not.toBeChecked();
+    expect(screen.getByText(/CALL is not selected/)).toBeInTheDocument();
+  });
+
+  it('shows a send-LYX-only allowed call as an editable Transfer Value entry and writes it back unchanged', async () => {
+    connect();
+    const pay = `0x0020${'00000001'}${RECIPIENT.slice(2).toLowerCase()}ffffffffffffffff`;
+    render(<AgentAuthorizeFlow search={link({ permissions: 'TRANSFERVALUE', allowedCalls: pay })} hash="" />);
+    expect(screen.getByText(new RegExp(`Send LYX to ${RECIPIENT}`))).toBeInTheDocument();
+    fireEvent.click(screen.getByText('#1'));
+    expect(box(/^Transfer Value ?\(Send LYX\)/)).toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: /^Delegate Call/ })).toBeNull();
+    expect((await approve()).allowedCalls).toBe(pay);
+  });
+
+  it('blocks authorizing while an edited entry is not valid, instead of writing "any function"', async () => {
+    connect();
+    render(<AgentAuthorizeFlow search={link()} hash="" />);
+    await screen.findByText(/not a controller of this profile yet/i);
+    acknowledge();
+    fireEvent.click(screen.getByText('#1'));
+    fireEvent.change(screen.getByDisplayValue('follow(address)'), { target: { value: 'follow(' } });
+    expect(screen.getByTestId('draft-problems')).toHaveTextContent(/allowed call #1.*function/i);
+    expect(authorizeButton()).toBeDisabled();
+    fireEvent.change(screen.getByDisplayValue('follow('), { target: { value: 'unfollow(address)' } });
+    expect(screen.queryByTestId('draft-problems')).toBeNull();
+    fireEvent.click(authorizeButton());
+    await screen.findByText(/authorized and verified/i);
+    expect(mocks.planControllerGrant.mock.calls[0][3].allowedCalls).toBe(`0x0020${'00000002'}f01103e5a9909fc0dbe8166da7085e0285daddcaffffffff015a4ead`);
+  });
+
+  it('asks before SUPER_CALL replaces the allowed calls, then writes SUPER_CALL without them', async () => {
+    connect();
+    render(<AgentAuthorizeFlow search={link({ permissions: 'CALL,SIGN,EXECUTE_RELAY_CALL,SUPER_CALL' })} hash="" />);
+    fireEvent.click(box(/call any contract as your profile/i));
+    fireEvent.click(await screen.findByRole('button', { name: /Enable & Clear Entries/ }));
+    await waitFor(() => expect(box(/call any contract as your profile/i)).toBeChecked());
+    expect(await approve()).toEqual({ permissions: CALL | SIGN | RELAY | SUPER_CALL, allowedCalls: null, allowedDataKeys: null });
+  });
+
+  it('keeps the owner’s edits when the wallet connects, changes network or account, and the page re-renders', async () => {
+    const { rerender } = render(<AgentAuthorizeFlow search={link({ forProfile: PROFILE })} hash="" />);
+    fireEvent.click(box(/sign messages as your profile/i));
+    fireEvent.click(box(/create new contracts from your profile/i));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove entry' }));
+    const again = () => rerender(<AgentAuthorizeFlow search={link({ forProfile: PROFILE })} hash="" />);
+
+    connect({ walletChainId: 4201 });
+    again();
+    expect(screen.getByText(/switch it to LUKSO/i)).toBeInTheDocument();
+    connect({ address: OTHER_PROFILE });
+    again();
+    await waitFor(() => expect(screen.getByText(/connect that profile instead/i)).toBeInTheDocument());
+    connect();
+    again();
+    expect(box(/sign messages as your profile/i)).not.toBeChecked();
+    expect(box(/create new contracts from your profile/i)).toBeChecked();
+    expect(screen.queryByText('#1')).toBeNull();
+    expect(await approve()).toEqual({ permissions: CALL | RELAY | DEPLOY, allowedCalls: null, allowedDataKeys: null });
+  });
+
+  it('can go back to the agent’s request', () => {
+    render(<AgentAuthorizeFlow search={link()} hash="" />);
+    expect(screen.queryByRole('button', { name: /reset to nova/i })).toBeNull();
+    fireEvent.click(box(/sign messages as your profile/i));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove entry' }));
+    fireEvent.click(screen.getByRole('button', { name: /reset to nova/i }));
+    expect(box(/sign messages as your profile/i)).toBeChecked();
+    expect(screen.getByText('#1')).toBeInTheDocument();
+    expect(within(changes()).getByText(/exactly what Nova asked for/i)).toBeInTheDocument();
+  });
+
+  it('reports success with what the owner approved, and says it differs from the request', async () => {
+    connect();
+    render(<AgentAuthorizeFlow search={link()} hash="" />);
+    fireEvent.click(box(/sign messages as your profile/i));
+    await approve();
+    expect(screen.getByTestId('approved-summary')).toHaveTextContent('CALL, EXECUTE_RELAY_CALL');
+    expect(screen.getByTestId('approved-summary')).not.toHaveTextContent('SIGN');
+    expect(screen.getByText(/different from what Nova asked for/i)).toBeInTheDocument();
+  });
+
+  it('words the differences for an agent link without a name', async () => {
+    connect();
+    render(<AgentAuthorizeFlow search={`?${new URLSearchParams({ controller: CONTROLLER, network: 'mainnet', permissions: 'CALL,SIGN', allowedCalls: FOLLOW }).toString()}`} hash="" />);
+    fireEvent.click(box(/sign messages as your profile/i));
+    expect(within(changes()).getByRole('heading', { name: 'Compared with the agent’s request' })).toBeInTheDocument();
+    expect(await screen.findByText('This is different from what the agent asked for (see above).')).toBeInTheDocument();
+    await approve();
+    expect(screen.getByTestId('approved-summary')).toHaveTextContent('This is different from what the agent asked for;');
+  });
+
+  it('disables the editor while the transaction is in progress', async () => {
+    connect();
+    mocks.client.waitForTransactionReceipt.mockReturnValue(new Promise(() => {}));
+    render(<AgentAuthorizeFlow search={link()} hash="" />);
+    await screen.findByText(/not a controller of this profile yet/i);
+    acknowledge();
+    fireEvent.click(authorizeButton());
+    await screen.findByText(/waiting for LUKSO to confirm/i);
+    expect(box(/sign messages as your profile/i)).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Add Allowed Call Entry/ })).toBeDisabled();
   });
 });

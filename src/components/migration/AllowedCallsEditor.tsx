@@ -8,10 +8,23 @@ import { Badge } from '@/components/ui/badge';
 import { INTERFACE_PRESETS } from '@/constants/allowedCalls';
 import { computeSelector, type AllowedCallEntry } from '@/lib/lsp6/allowedCalls';
 
+export type CallTypeKey = keyof AllowedCallEntry['callTypes'];
+
+const CALL_TYPE_OPTIONS: Record<CallTypeKey, { label: string; desc: string }> = {
+  transferValue: { label: 'Transfer Value', desc: 'Send LYX' },
+  call: { label: 'Call', desc: 'Execute transactions' },
+  staticCall: { label: 'Static Call', desc: 'Read-only queries' },
+  delegateCall: { label: 'Delegate Call', desc: 'Dangerous' },
+};
+
 interface AllowedCallsEditorProps {
   entries: AllowedCallEntry[];
   onChange: (entries: AllowedCallEntry[]) => void;
   disabled?: boolean;
+  /** Call types offered for each entry. */
+  callTypes?: readonly CallTypeKey[];
+  /** Plain-words summary of an entry, or null to show the built-in one. */
+  summarize?: (entry: AllowedCallEntry) => string | null;
 }
 
 function createEmptyEntry(): AllowedCallEntry {
@@ -27,7 +40,13 @@ function createEmptyEntry(): AllowedCallEntry {
   };
 }
 
-export function AllowedCallsEditor({ entries, onChange, disabled = false }: AllowedCallsEditorProps) {
+export function AllowedCallsEditor({
+  entries,
+  onChange,
+  disabled = false,
+  callTypes = ['call', 'staticCall', 'delegateCall'],
+  summarize,
+}: AllowedCallsEditorProps) {
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
 
   const addEntry = () => {
@@ -76,6 +95,8 @@ export function AllowedCallsEditor({ entries, onChange, disabled = false }: Allo
                 onUpdate={(updates) => updateEntry(entry.id, updates)}
                 onRemove={() => removeEntry(entry.id)}
                 disabled={disabled}
+                callTypes={callTypes}
+                summary={summarize?.(entry) ?? null}
               />
             ))}
           </div>
@@ -113,9 +134,12 @@ interface EntryCardProps {
   onUpdate: (updates: Partial<AllowedCallEntry>) => void;
   onRemove: () => void;
   disabled?: boolean;
+  callTypes: readonly CallTypeKey[];
+  /** Replaces the built-in summary when given. */
+  summary: string | null;
 }
 
-function EntryCard({ entry, index, isExpanded, onToggle, onUpdate, onRemove, disabled }: EntryCardProps) {
+function EntryCard({ entry, index, isExpanded, onToggle, onUpdate, onRemove, disabled, callTypes, summary: givenSummary }: EntryCardProps) {
   const computedSelector = useMemo(() => {
     if (entry.useAnyFunction || !entry.functionInput) return null;
     return computeSelector(entry.functionInput);
@@ -124,6 +148,7 @@ function EntryCard({ entry, index, isExpanded, onToggle, onUpdate, onRemove, dis
   const summary = useMemo(() => {
     const parts: string[] = [];
     const types: string[] = [];
+    if (entry.callTypes.transferValue) types.push('TRANSFERVALUE');
     if (entry.callTypes.call) types.push('CALL');
     if (entry.callTypes.staticCall) types.push('STATICCALL');
     if (entry.callTypes.delegateCall) types.push('DELEGATECALL');
@@ -156,7 +181,7 @@ function EntryCard({ entry, index, isExpanded, onToggle, onUpdate, onRemove, dis
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className="text-xs font-bold text-muted-foreground">#{index + 1}</span>
-          <span className="text-sm truncate">{summary}</span>
+          <span className={`text-sm ${givenSummary ? 'min-w-0 break-words' : 'truncate'}`}>{givenSummary ?? summary}</span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
@@ -182,15 +207,11 @@ function EntryCard({ entry, index, isExpanded, onToggle, onUpdate, onRemove, dis
           <div>
             <label className="block text-sm font-medium mb-2">Call Types</label>
             <div className="flex flex-wrap gap-3">
-              {[
-                { key: 'call' as const, label: 'Call', desc: 'Execute transactions' },
-                { key: 'staticCall' as const, label: 'Static Call', desc: 'Read-only queries' },
-                { key: 'delegateCall' as const, label: 'Delegate Call', desc: 'Dangerous' },
-              ].map(({ key, label, desc }) => (
+              {callTypes.map((key) => ({ key, ...CALL_TYPE_OPTIONS[key] })).map(({ key, label, desc }) => (
                 <label key={key} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={entry.callTypes[key]}
+                    checked={!!entry.callTypes[key]}
                     onChange={(e) => onUpdate({ callTypes: { ...entry.callTypes, [key]: e.target.checked } })}
                     disabled={disabled}
                     className="h-4 w-4 rounded border-border"
@@ -205,7 +226,7 @@ function EntryCard({ entry, index, isExpanded, onToggle, onUpdate, onRemove, dis
             {entry.callTypes.delegateCall && (
               <p className="mt-1 text-xs text-destructive">Delegate call allows executing code in the profile&apos;s context — extremely dangerous!</p>
             )}
-            {!entry.callTypes.call && !entry.callTypes.staticCall && !entry.callTypes.delegateCall && (
+            {!entry.callTypes.transferValue && !entry.callTypes.call && !entry.callTypes.staticCall && !entry.callTypes.delegateCall && (
               <p className="mt-1 text-xs text-destructive">At least one call type must be selected</p>
             )}
             {entry.useAnyAddress && entry.useAnyInterface && entry.useAnyFunction && (

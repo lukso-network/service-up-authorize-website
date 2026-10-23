@@ -12,9 +12,11 @@ interface AllowedDataKeysEditorProps {
   entries: DataKeyEntry[];
   onChange: (entries: DataKeyEntry[]) => void;
   disabled?: boolean;
+  /** Ids of DATA_KEY_PRESETS this page does not offer. */
+  excludePresets?: readonly string[];
 }
 
-export function AllowedDataKeysEditor({ entries, onChange, disabled = false }: AllowedDataKeysEditorProps) {
+export function AllowedDataKeysEditor({ entries, onChange, disabled = false, excludePresets = [] }: AllowedDataKeysEditorProps) {
   const [customKeyInput, setCustomKeyInput] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [openMappingPopover, setOpenMappingPopover] = useState<string | null>(null);
@@ -108,7 +110,7 @@ export function AllowedDataKeysEditor({ entries, onChange, disabled = false }: A
   };
 
   // Group presets by category
-  const groups = Object.entries(DATA_KEY_PRESETS).reduce<Record<string, { key: string; preset: typeof DATA_KEY_PRESETS[string] }[]>>(
+  const groups = Object.entries(DATA_KEY_PRESETS).filter(([key]) => !excludePresets.includes(key)).reduce<Record<string, { key: string; preset: typeof DATA_KEY_PRESETS[string] }[]>>(
     (acc, [key, preset]) => {
       if (!acc[preset.group]) acc[preset.group] = [];
       acc[preset.group].push({ key, preset });

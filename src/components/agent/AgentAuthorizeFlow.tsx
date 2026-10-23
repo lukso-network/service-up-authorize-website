@@ -8,11 +8,12 @@
  *    WalletConnect, or UP Provider inside Universal Everything).
  * 3. Checks: wallet on the request's network (never switched), the right profile, a real
  *    Universal Profile, the agent's current state on it.
- * 4. The owner unticks what they do not want, confirms the agent address and approves the
- *    transaction in their own wallet. The page never signs.
- * 5. After the receipt, the agent's stored permissions are read back and compared exactly.
+ * 4. The owner adjusts the request in the site's permissions editor (prefilled from the link, once),
+ *    confirms the agent address and approves the transaction in their own wallet. The page never signs.
+ * 5. After the receipt, the agent's stored permissions are read back and compared exactly with what the
+ *    owner approved.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Address, Hex } from 'viem';
 import { Button } from '@/components/ui/button';
@@ -23,16 +24,18 @@ import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { ProfileIdentityCard } from '@/components/shared/ProfileIdentityCard';
 import { WalletConnector, WalletConnectorCompact } from '@/components/wallet/WalletConnector';
 import { useWallet } from '@/contexts/WalletContext';
-import { PERMISSIONS, getActivePermissions, type PermissionKey } from '@/constants/permissions';
+import { getActivePermissions } from '@/constants/permissions';
 import { getEndpoints } from '@/constants/endpoints';
 import { parseAgentRequest, type AgentRequest } from '@/lib/agent-request/parse';
 import { REQUEST_NETWORKS } from '@/lib/agent-request/constants';
 import { publicClientFor } from '@/lib/agent-request/client';
+import { draftFromRequest, checkDraft, compareWithRequest, sameDraft, type DraftCheck } from '@/lib/agent-request/draft';
 import { readControllerState, planControllerGrant, grantMatches, type ControllerState, type GrantTarget } from '@/lib/lsp6/grant';
 import { shortenAddress, copyToClipboard } from '@/lib/utils/format';
 import { chainLabel } from '@/lib/utils/chains';
 import { AgentRequestReview } from './AgentRequestReview';
 import { AgentRequestError } from './AgentRequestError';
+import { AgentPermissions } from './AgentPermissions';
 
 type Onchain = { status: 'idle' } | { status: 'loading' } | { status: 'ready'; state: ControllerState } | { status: 'error'; error: string };
 
@@ -40,7 +43,17 @@ type Tx =
   | { status: 'idle' }
   | { status: 'signing'; key: string }
   | { status: 'confirming' | 'verifying'; key: string; hash: Hex; profile: Address }
-  | { status: 'done'; key: string; profile: Address; hash?: Hex; verified: { matches: boolean; differences: string[] }; unchanged?: boolean }
+  | {
+      status: 'done';
+      key: string;
+      profile: Address;
+      hash?: Hex;
+      verified: { matches: boolean; differences: string[] };
+      unchanged?: boolean;
+      /** What the owner approved, and whether it differs from the agent's request. */
+      approved: string;
+      differs: boolean;
+    }
   | { status: 'failed'; key: string; error: string; hash?: Hex };
 
 function errorText(e: unknown): string {
@@ -61,6 +74,17 @@ function CheckIcon({ ok }: { ok: boolean | null }) {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
   );
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** The owner's selection in one line: permissions, and how many allowed calls and data keys limit them. */
+function selectionText(check: DraftCheck): string {
+  const limits = [
+    check.allowedCalls.length ? plural(check.allowedCalls.length, 'allowed call') : '',
+    check.allowedDataKeys.length ? plural(check.allowedDataKeys.length, 'allowed data key') : '',
+  ].filter(Boolean);
+  return `${check.permissions.join(', ')}${limits.length ? `, with ${limits.join(' and ')}` : ''}`;
 }
 
 function Check({ ok, children }: { ok: boolean | null; children: React.ReactNode }) {
@@ -91,7 +115,10 @@ export function AgentAuthorizeFlow({ search, hash }: { search: string; hash: str
 function RequestFlow({ request }: { request: AgentRequest }) {
   const router = useRouter();
   const wallet = useWallet();
-  const [selected, setSelected] = useState<Set<PermissionKey>>(() => new Set(request.standard));
+  // The link prefills the editor once. From then on the editor holds the owner's selection: nothing re-reads
+  // the link, so re-renders and wallet, network or profile changes never reset it.
+  const [prefill] = useState(() => draftFromRequest(request));
+  const [draft, setDraft] = useState(prefill);
   const [acknowledged, setAcknowledged] = useState(false);
   const [onchain, setOnchain] = useState<{ key: string; result: Onchain } | null>(null);
   const [tx, setTx] = useState<Tx>({ status: 'idle' });
@@ -99,16 +126,18 @@ function RequestFlow({ request }: { request: AgentRequest }) {
 
   const network = REQUEST_NETWORKS[request.network].label;
   const name = request.name ?? 'This agent';
+  const askedBy = request.name ?? 'the agent';
   const profile = wallet.isConnected && wallet.address ? (wallet.address as Address) : null;
   const chainOk = wallet.walletChainId === request.chainId;
   const profileMatches = !profile || !request.profile || profile.toLowerCase() === request.profile.toLowerCase();
   const isSelf = !!profile && profile.toLowerCase() === request.controller.toLowerCase();
   const readKey = profile && chainOk && profileMatches && !isSelf ? `${profile.toLowerCase()}:${request.chainId}` : null;
   const current: Onchain = !readKey ? { status: 'idle' } : onchain?.key === readKey ? onchain.result : { status: 'loading' };
-  const selectedPermissions = request.permissions.filter((p) => selected.has(p));
-  const selectedValue = selectedPermissions.reduce((v, p) => v | PERMISSIONS[p], 0n);
+  const check = useMemo(() => checkDraft(draft), [draft]);
+  const difference = useMemo(() => compareWithRequest(request, check), [request, check]);
+  const selectedPermissions = check.permissions;
   const busy = tx.status === 'signing' || tx.status === 'confirming' || tx.status === 'verifying';
-  const canAuthorize = !!readKey && current.status === 'ready' && selectedValue > 0n && acknowledged && !busy;
+  const canAuthorize = !!readKey && current.status === 'ready' && check.target !== null && acknowledged && !busy;
 
   // The agent's current state on the connected profile; re-read whenever account or chain changes.
   useEffect(() => {
@@ -130,34 +159,22 @@ function RequestFlow({ request }: { request: AgentRequest }) {
     };
   }, [readKey, profile, request.chainId, request.controller, network]);
 
-  const toggle = useCallback(
-    (p: PermissionKey) => {
-      if (!request.permissions.includes(p)) return; // never more than the link asked for
-      setSelected((cur) => {
-        const next = new Set(cur);
-        if (next.has(p)) next.delete(p);
-        else next.add(p);
-        return next;
-      });
-    },
-    [request.permissions],
-  );
-
   const cancel = () => {
     wallet.disconnect();
     router.push('/');
   };
 
   const authorize = async () => {
-    if (!canAuthorize || !profile || !readKey) return;
+    const target: GrantTarget | null = check.target;
+    if (!canAuthorize || !profile || !readKey || !target) return;
     const key = readKey;
-    const target: GrantTarget = { permissions: selectedValue, allowedCalls: request.allowedCallsHex, allowedDataKeys: request.allowedDataKeysHex };
+    const outcome = { approved: selectionText(check), differs: !difference.same };
     setTx({ status: 'signing', key });
     try {
       const client = publicClientFor(request.chainId);
       const plan = await planControllerGrant(client, profile, request.controller, target);
       if (!plan.calldata) {
-        setTx({ status: 'done', key, profile, verified: grantMatches(plan.current, target), unchanged: true });
+        setTx({ status: 'done', key, profile, verified: grantMatches(plan.current, target), unchanged: true, ...outcome });
         return;
       }
       const hash = await wallet.sendTransaction({ to: profile, data: plan.calldata, chainId: request.chainId });
@@ -173,7 +190,7 @@ function RequestFlow({ request }: { request: AgentRequest }) {
       }
       setTx({ status: 'verifying', key, hash, profile });
       const state = await readControllerState(client, profile, request.controller);
-      setTx({ status: 'done', key, hash, profile, verified: grantMatches(state, target) });
+      setTx({ status: 'done', key, hash, profile, verified: grantMatches(state, target), ...outcome });
     } catch (e) {
       setTx({ status: 'failed', key, error: errorText(e) });
     }
@@ -207,6 +224,10 @@ function RequestFlow({ request }: { request: AgentRequest }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div data-testid="approved-summary" className="rounded-lg border p-3 text-sm">
+              <p className="break-words">You approved: {tx.approved}.</p>
+              {tx.differs && <p className="mt-1 text-muted-foreground">This is different from what {askedBy} asked for; the agent sees what you approved when it checks your profile.</p>}
+            </div>
             {tx.verified.matches && (
               <div className="space-y-2">
                 <p className="text-sm">Tell your agent it is done. If it does not know your profile address yet, send it this:</p>
@@ -252,7 +273,18 @@ function RequestFlow({ request }: { request: AgentRequest }) {
   return (
     <>
       {header}
-      <AgentRequestReview request={request} selected={selected} onToggle={toggle} disabled={busy} />
+      <AgentRequestReview request={request}>
+        <AgentPermissions
+          request={request}
+          draft={draft}
+          onDraftChange={setDraft}
+          check={check}
+          difference={difference}
+          edited={!sameDraft(draft, prefill)}
+          onReset={() => setDraft(draftFromRequest(request))}
+          disabled={busy}
+        />
+      </AgentRequestReview>
 
       {!profile ? (
         <Card>
@@ -335,13 +367,18 @@ function RequestFlow({ request }: { request: AgentRequest }) {
             </ul>
 
             <div className="rounded-lg border p-3 text-sm">
-              {selectedValue === 0n ? (
+              {draft.permissions === 0n ? (
                 <p className="text-destructive">Select at least one permission.</p>
+              ) : check.problems.length > 0 ? (
+                <p className="text-destructive">Fix the problems listed above before you approve.</p>
               ) : (
-                <p>
-                  You are about to let {name} ({shortenAddress(request.controller)}) use {selectedPermissions.length} permission
-                  {selectedPermissions.length === 1 ? '' : 's'} on {shortenAddress(profile)} on {network}: {selectedPermissions.join(', ')}.
-                </p>
+                <>
+                  <p className="break-words">
+                    You are about to let {name} ({shortenAddress(request.controller)}) use {plural(selectedPermissions.length, 'permission')} on{' '}
+                    {shortenAddress(profile)} on {network}: {selectionText(check)}.
+                  </p>
+                  {!difference.same && <p className="mt-1 text-muted-foreground">This is different from what {askedBy} asked for (see above).</p>}
+                </>
               )}
             </div>
 

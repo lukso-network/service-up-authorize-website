@@ -88,6 +88,15 @@ describe('convertEntriesToAllowedCalls', () => {
     ); // 2 | 4 | 8 = 14
   });
 
+  it('sets the TRANSFERVALUE bit for a transfer-value entry', () => {
+    const entry: AllowedCallEntry = {
+      ...baseEntry,
+      callTypes: { transferValue: true, call: true, staticCall: false, delegateCall: false },
+    };
+    const result = convertEntriesToAllowedCalls([entry]);
+    expect(result[0].callTypes).toBe(CALL_TYPES.TRANSFERVALUE | CALL_TYPES.CALL); // 1 | 2 = 3
+  });
+
   it('uses 0xFFFF...FFFF address when useAnyAddress is true', () => {
     const result = convertEntriesToAllowedCalls([baseEntry]);
     expect(result[0].address.toLowerCase()).toBe(

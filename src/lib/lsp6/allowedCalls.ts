@@ -13,7 +13,8 @@ import { CALL_TYPES } from '@/constants/allowedCalls';
  */
 export interface AllowedCallEntry {
   id: string;
-  callTypes: { call: boolean; staticCall: boolean; delegateCall: boolean };
+  /** transferValue: sending LYX to the target (only offered for agent requests, which may carry it). */
+  callTypes: { transferValue?: boolean; call: boolean; staticCall: boolean; delegateCall: boolean };
   address: string;
   useAnyAddress: boolean;
   interfaceId: string;
@@ -66,6 +67,7 @@ export function computeSelector(input: string): Hex | null {
 export function convertEntriesToAllowedCalls(entries: AllowedCallEntry[]): AllowedCall[] {
   return entries.map(entry => {
     let callTypeBitmap = 0;
+    if (entry.callTypes.transferValue) callTypeBitmap |= CALL_TYPES.TRANSFERVALUE;
     if (entry.callTypes.call) callTypeBitmap |= CALL_TYPES.CALL;
     if (entry.callTypes.staticCall) callTypeBitmap |= CALL_TYPES.STATICCALL;
     if (entry.callTypes.delegateCall) callTypeBitmap |= CALL_TYPES.DELEGATECALL;

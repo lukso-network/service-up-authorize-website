@@ -131,6 +131,11 @@ const KNOWN_FUNCTIONS: Record<string, { signature: string; words: string }> = {
   '0x23b872dd': { signature: 'transferFrom(address,address,uint256)', words: 'move approved tokens (ERC-20)' },
 };
 
+/** The signature of a well-known function selector, if this page knows it. */
+export function knownFunctionSignature(selector: Hex): string | undefined {
+  return KNOWN_FUNCTIONS[selector.toLowerCase()]?.signature;
+}
+
 export interface AllowedCallDescription {
   /** One plain sentence for the list. */
   summary: string;
